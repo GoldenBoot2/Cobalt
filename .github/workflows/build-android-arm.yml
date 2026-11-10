@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 355
     steps:
       - name: Free disk space
@@ -35,7 +35,7 @@ jobs:
           df -h /
 
       - name: Check out Cobalt source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: youtube/cobalt
           ref: ${{ inputs.cobalt_ref }}
@@ -46,8 +46,12 @@ jobs:
         working-directory: cobalt
         # One at a time: each image is built FROM the previous one, and a combined
         # "compose build" builds them in parallel and looks for them on Docker Hub.
+        # The base image normally starts FROM marketplace.gcr.io/google/debian11, which
+        # refuses anonymous pulls (403); Docker Hub's official debian:bullseye is the
+        # same Debian 11, so the base image is built from it directly.
         run: |
-          docker compose build base
+          docker build --build-arg BASE_OS=debian --build-arg BASE_OS_TAG=bullseye \
+            -t cobalt-base -f docker/linux/base/Dockerfile docker/linux
           docker compose build build-base
           docker compose build build-android
           docker image ls
@@ -73,7 +77,7 @@ jobs:
           sha256sum dist/*.apk
 
       - name: Upload the APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}
           path: dist/*.apk
