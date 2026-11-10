@@ -1,0 +1,77 @@
+name: Build Cobalt (Android arm)
+
+# Manual run only: Actions tab > "Build Cobalt (Android arm)" > Run workflow.
+# Builds the official Cobalt source with Cobalt's own Docker setup
+# (docker-compose.yml service "android-arm", docker/linux/android/Dockerfile).
+
+on:
+  workflow_dispatch:
+    inputs:
+      cobalt_ref:
+        description: "youtube/cobalt tag or branch"
+        required: true
+        default: "25.lts.40"
+      config:
+        description: "Build type"
+        required: true
+        default: "gold"
+        type: choice
+        options: [gold, qa]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+                      /usr/local/share/boost /usr/share/swift /usr/local/.ghcup "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Check out Cobalt source
+        uses: actions/checkout@v4
+        with:
+          repository: youtube/cobalt
+          ref: ${{ inputs.cobalt_ref }}
+          fetch-depth: 1
+          path: cobalt
+
+      - name: Build the Docker build images
+        working-directory: cobalt
+        run: |
+          docker compose build base build-base build-android
+          df -h /
+
+      - name: Build Cobalt
+        working-directory: cobalt
+        run: |
+          docker compose run --rm -T \
+            -e CONFIG=${{ inputs.config }} \
+            -e NINJA_PARALLEL=4 \
+            -e TARGET=cobalt_install \
+            android-arm
+          df -h /
+
+      - name: Collect the APK
+        run: |
+          mkdir -p dist
+          find cobalt/out -name "*.apk" -size +1M -print
+          apk=$(find cobalt/out -name "cobalt.apk" | head -n 1)
+          test -n "$apk"
+          cp "$apk" "dist/cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}.apk"
+          sha256sum dist/*.apk
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}
+          path: dist/*.apk
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error

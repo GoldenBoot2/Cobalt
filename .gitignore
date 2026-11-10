@@ -1,0 +1,26 @@
+# Build inputs/outputs (big, rebuilt or re-downloaded any time)
+apk/
+work/
+out/
+*.apk
+*.aab
+*.zip
+*.so
+
+# Signing keys and secrets: never commit
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+secrets/
+*.env
+.env*
+
+# Local-only tools (contain local paths / TV details; repo is public)
+tools/add_howtouse_entry.py
+
+# Local tool caches
+__pycache__/
+*.pyc
+.claude/
