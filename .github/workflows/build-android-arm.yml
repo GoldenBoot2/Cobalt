@@ -44,8 +44,13 @@ jobs:
 
       - name: Build the Docker build images
         working-directory: cobalt
+        # One at a time: each image is built FROM the previous one, and a combined
+        # "compose build" builds them in parallel and looks for them on Docker Hub.
         run: |
-          docker compose build base build-base build-android
+          docker compose build base
+          docker compose build build-base
+          docker compose build build-android
+          docker image ls
           df -h /
 
       - name: Build Cobalt
