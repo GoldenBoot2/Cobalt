@@ -19,6 +19,7 @@ secrets/
 
 # Local-only tools (contain local paths / TV details; repo is public)
 tools/add_howtouse_entry.py
+tools/check_saved.py
 
 # Local tool caches
 __pycache__/
