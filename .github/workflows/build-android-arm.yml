@@ -116,6 +116,9 @@ jobs:
             -e SCCACHE=1 \
             -e SCCACHE_DIR=/root/ccache/sccache \
             -e SCCACHE_CACHE_SIZE=6G \
+            -e SCCACHE_LOG=debug \
+            -e SCCACHE_ERROR_LOG=/root/ccache/sccache-server.log \
+            -e GRADLE_USER_HOME=/root/ccache/gradle \
             android-arm
           sudo chown -R "$(id -u):$(id -g)" "$CCACHE_DIR"
           du -sh "$CCACHE_DIR"
@@ -130,7 +133,11 @@ jobs:
         run: |
           mkdir -p ccache
           sudo chown -R "$(id -u):$(id -g)" ccache
-          du -sh ccache
+          # The sccache server log is for this run only: keep it out of the saved cache.
+          if [ -f ccache/sccache-server.log ]; then mv ccache/sccache-server.log sccache-server.log; fi
+          # Gradle's own daemon/lock files must not be cached.
+          rm -rf ccache/gradle/daemon ccache/gradle/caches/*/*.lock ccache/gradle/native || true
+          du -sh ccache ccache/* || true
           echo "mb=$(du -sm ccache | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Save the compiler cache
@@ -160,6 +167,20 @@ jobs:
             ninja -t commands "$o" | tail -n 1 > "$fp/$n.cmd.txt"
             wc -l "$fp/$n.deps.txt"
           done
+          # What sccache did with each compile (hit / miss / not cacheable and why).
+          log="$GITHUB_WORKSPACE/sccache-server.log"
+          if [ -f "$log" ]; then
+            ls -la "$log"
+            grep -ciE "cache hit" "$log" | sed 's/^/hit lines: /'
+            grep -ciE "cache miss" "$log" | sed 's/^/miss lines: /'
+            grep -ciE "non-cacheable|not cacheable|cannot cache" "$log" | sed 's/^/non-cacheable lines: /'
+            grep -iE "generated_(bindings|types)_sources" "$log" | head -n 600 > "$fp/sccache-bindings.txt" || true
+            grep -iE "non-cacheable|not cacheable|cannot cache|error" "$log" | head -n 300 > "$fp/sccache-noncacheable.txt" || true
+            grep -iE "v8c_algorithm|v8c_storage_event" "$log" | head -n 200 > "$fp/sccache-samples.txt" || true
+            tail -n 200 "$log" > "$fp/sccache-tail.txt"
+          else
+            echo "no sccache server log"
+          fi
 
       - name: Upload the fingerprints
         if: success()
