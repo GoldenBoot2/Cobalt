@@ -64,6 +64,12 @@ enum Mode : uint32_t {
   kModeNoPageScript = 2,       // no cosmetic rules or scriptlets at all
   kModeNoNetwork = 4,          // no request blocking
   kModeGenericAsCss = 8,       // all generic hiding as one style sheet (old way)
+  // YouTube TV player answers (kYtTv in the page script; default: ad lists set to []):
+  kModeYtDeleteKeys = 16,      // delete the ad keys instead (breaks playback)
+  kModeYtReserialize = 32,     // re-serialise the answer unchanged
+  kModeYtOff = 64,             // handler off (ads play)
+  kModeYtOriginalText = 128,   // original text in a new Response
+  kModeAdProbes = 256,         // RAW/FINAL answer reports, env check, verbose scriptlets
 };
 
 // JavaScript that applies this page's cosmetic rules and scriptlets, or "" if

@@ -589,9 +589,12 @@ const char kDebugHead[] =
     "var p;try{p=gof.apply(this,arguments);}catch(e){gbr('fetch threw: '+gbs(e));throw e;}"
     "return p.then(null,function(e){"
     "gbr('fetch failed: '+String(u&&u.url||u).slice(0,150)+' mode='+(o&&o.mode)+' '+"
-    "(e&&(e.name+': '+e.message)||e));throw e;});};}else{gbr('no window.fetch');}}catch(e){}\n"
-    // Ad probes: what the video-info answers contain before (RAW) and after (FINAL)
-    // the scriptlets, what Cobalt supports, and the scriptlets' own log lines.
+    "(e&&(e.name+': '+e.message)||e));throw e;});};}else{gbr('no window.fetch');}}catch(e){}\n";
+
+// Ad probes (test switch bit kModeAdProbes only): what the video-info answers contain
+// before (RAW) and after (FINAL) the scriptlets, what Cobalt supports, and the
+// scriptlets' own log lines (they run verbose then).
+const char kAdProbes[] =
     "var gyp=/youtubei\\/v1\\/(player|next|reel|get_watch)|\\/player\\?|get_watch/;\n"
     "function gad(t){return 'len='+t.length+' adPlacements='+(t.indexOf('\"adPlacements\"')>=0)+"
     "' playerAds='+(t.indexOf('\"playerAds\"')>=0)+' adSlots='+(t.indexOf('\"adSlots\"')>=0)+"
@@ -892,6 +895,8 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
   std::string out = "(function(){\n";
   out += kPolyfills;
   out += kDebugHead;
+  const bool probes = (mode & kModeAdProbes) != 0;
+  if (probes) out += kAdProbes;
   std::vector<uint32_t> defined;
   std::string sl_names;
   for (const auto& sl : scriptlets) {
@@ -908,10 +913,10 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
       defined.push_back(idx);
       out += "var " + fn + "=(" + kAdgSlCode[idx] + ");\n";
     }
-    // Source JSON with verbose on, so the scriptlets log what they do (reported above).
+    // With the ad probes on, the scriptlets run verbose so they log what they do.
     std::string src(t1 + 1, t2 - t1 - 1);
     const size_t vpos = src.find("\"verbose\":false");
-    if (vpos != std::string::npos) src.replace(vpos, 15, "\"verbose\":true");
+    if (probes && vpos != std::string::npos) src.replace(vpos, 15, "\"verbose\":true");
     std::string name = "?";
     const size_t npos_ = src.find("\"name\":\"");
     if (npos_ != std::string::npos) {
@@ -923,12 +928,16 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
     out.append(t2 + 1, end - t2 - 1);
     out += ");}catch(e){gbr('scriptlet " + name + " threw '+gbs(e));}\n";
   }
-  out += "gbr('scriptlets ran: " + sl_names + "');\n";
-  out += "try{gbr('fetch replaced by scriptlets: '+(window.fetch!==gfp));}catch(e){}\n";
+  if (probes) {
+    out += "gbr('scriptlets ran: " + sl_names + "');\n";
+    out += "try{gbr('fetch replaced by scriptlets: '+(window.fetch!==gfp));}catch(e){}\n";
+  }
   out += "var gbmode=" + std::to_string(mode) + ";\n";
   out += kYtTv;
-  out += "try{"
-         "if(window.fetch)window.fetch=gprobe('FINAL',window.fetch);}catch(e){}\n";
+  if (probes) {
+    out += "try{"
+           "if(window.fetch)window.fetch=gprobe('FINAL',window.fetch);}catch(e){}\n";
+  }
   for (const auto& sc : scripts) {
     out += "try{\n";
     out.append(sc.first, sc.second);
