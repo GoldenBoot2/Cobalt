@@ -110,6 +110,57 @@ edit('cobalt/dom/html_style_element.cc',
      '    if (p->local_name() == std::string("noscript")) return;\n'
      '  }\n')
 
+# 3c. <script defer>: Cobalt ignores "defer" and runs a parser-inserted <script src defer> at
+# its place in <head> (synchronously), before <body> exists. Such scripts are now held back
+# and run in order when parsing ends, just before DOMContentLoaded, as in browsers.
+edit('cobalt/dom/document.h',
+     '  std::deque<HTMLScriptElement*>* scripts_to_be_executed() {\n'
+     '    return &scripts_to_be_executed_;\n  }\n',
+     '  std::deque<HTMLScriptElement*>* scripts_to_be_executed() {\n'
+     '    return &scripts_to_be_executed_;\n  }\n\n'
+     '  // GoldenBoot: <script defer> elements held back until parsing ends.\n'
+     '  std::vector<scoped_refptr<HTMLScriptElement>>* gb_deferred_scripts() {\n'
+     '    return &gb_deferred_scripts_;\n  }\n')
+edit('cobalt/dom/document.h',
+     '  std::deque<HTMLScriptElement*> scripts_to_be_executed_;\n',
+     '  std::deque<HTMLScriptElement*> scripts_to_be_executed_;\n'
+     '  std::vector<scoped_refptr<HTMLScriptElement>> gb_deferred_scripts_;\n')
+edit('cobalt/dom/html_script_element.h',
+     '\n public:\n',
+     '\n public:\n  // GoldenBoot: runs a held-back <script defer> (end of parsing).\n'
+     '  void RunDeferred();\n\n')
+edit('cobalt/dom/html_script_element.h',
+     '  bool is_already_started_;\n',
+     '  bool is_already_started_;\n  bool gb_defer_released_ = false;  // GoldenBoot\n')
+edit('cobalt/dom/html_script_element.cc',
+     '  if (HasAttribute("src") && is_parser_inserted_ && !async()) {\n',
+     '  if (HasAttribute("src") && is_parser_inserted_ && !async() &&\n'
+     '      HasAttribute("defer") && !gb_defer_released_) {\n'
+     '    // GoldenBoot: hold <script defer> until parsing ends (RunDeferred).\n'
+     '    is_already_started_ = false;\n'
+     '    document_->gb_deferred_scripts()->push_back(this);\n'
+     '    return;\n'
+     '  }\n'
+     '  if (HasAttribute("src") && is_parser_inserted_ && !async()) {\n')
+edit('cobalt/dom/html_script_element.cc',
+     'void HTMLScriptElement::Prepare() {\n',
+     'void HTMLScriptElement::RunDeferred() {\n'
+     '  gb_defer_released_ = true;\n'
+     '  Prepare();\n'
+     '}\n\n'
+     'void HTMLScriptElement::Prepare() {\n')
+edit('cobalt/dom_parser/libxml_parser_wrapper.cc',
+     '#include "cobalt/dom/element.h"\n',
+     '#include "cobalt/dom/element.h"\n#include "cobalt/dom/html_script_element.h"\n\n'
+     '#include <vector>  // GoldenBoot\n')
+edit('cobalt/dom_parser/libxml_parser_wrapper.cc',
+     '    document_->CollectTimingInfoAndDispatchEvent();\n',
+     '    // GoldenBoot: run held-back <script defer> elements in order.\n'
+     '    std::vector<scoped_refptr<dom::HTMLScriptElement>> gb_deferred;\n'
+     '    gb_deferred.swap(*document_->gb_deferred_scripts());\n'
+     '    for (const auto& script : gb_deferred) script->RunDeferred();\n'
+     '    document_->CollectTimingInfoAndDispatchEvent();\n')
+
 # 3b. CSS that Cobalt cannot parse (custom properties, clamp/min/max, inset) is rewritten
 # before parsing: css_compat.{h,cc} in cobalt/css_parser.
 cp = os.path.join(SRC, 'cobalt', 'css_parser')
