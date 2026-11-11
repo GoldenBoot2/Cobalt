@@ -84,17 +84,94 @@ class SortedList {
   std::vector<uint32_t> offsets_;
 };
 
+// Host table written by front_coded() in adguard_rules.py: reversed host names,
+// sorted, front-coded in buckets of kFcBucket entries (the first of each bucket
+// stored whole). Entry: shared-prefix length, suffix length, suffix bytes, then
+// an optional little-endian uint32 payload. Read in place, no memory needed.
+const uint32_t kFcBucket = 16;
+
+struct FcList {
+  const unsigned char* data;
+  const uint32_t* heads;
+  uint32_t count;
+  bool has_payload;
+
+  // Looks up key (a reversed host name); fills *payload if found.
+  bool Find(const char* key, size_t kn, uint32_t* payload) const {
+    if (count == 0) return false;
+    const uint32_t nheads = (count + kFcBucket - 1) / kFcBucket;
+    size_t lo = 0;
+    size_t hi = nheads;
+    while (lo < hi) {  // first bucket whose first entry is > key
+      size_t mid = lo + (hi - lo) / 2;
+      const unsigned char* e = data + heads[mid];
+      if (Compare(e + 2, e[1], key, kn) <= 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    if (lo == 0) return false;
+    const size_t bucket = lo - 1;
+    const unsigned char* p = data + heads[bucket];
+    unsigned char buf[256];
+    size_t idx = bucket * kFcBucket;
+    for (uint32_t i = 0; i < kFcBucket && idx < count; ++i, ++idx) {
+      const size_t shared = p[0];
+      const size_t sl = p[1];
+      memcpy(buf + shared, p + 2, sl);
+      const size_t len = shared + sl;
+      p += 2 + sl;
+      uint32_t pl = 0;
+      if (has_payload) {
+        pl = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+             (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+        p += 4;
+      }
+      int c = Compare(buf, len, key, kn);
+      if (c == 0) {
+        if (payload) *payload = pl;
+        return true;
+      }
+      if (c > 0) return false;
+    }
+    return false;
+  }
+
+ private:
+  static int Compare(const unsigned char* a, size_t an, const char* b, size_t bn) {
+    size_t n = an < bn ? an : bn;
+    for (size_t i = 0; i < n; ++i) {
+      unsigned char y = static_cast<unsigned char>(b[i]);
+      if (a[i] != y) return a[i] < y ? -1 : 1;
+    }
+    if (an == bn) return 0;
+    return an < bn ? -1 : 1;
+  }
+};
+
+FcList MakeFc(const char* data, const uint32_t* heads, uint32_t count, bool payload) {
+  FcList l;
+  l.data = reinterpret_cast<const unsigned char*>(data);
+  l.heads = heads;
+  l.count = count;
+  l.has_payload = payload;
+  return l;
+}
+
 struct Data {
   Data()
-      : important(kAdgImportant),
-        block_all(kAdgBlockAll),
-        block_3p(kAdgBlock3p),
-        allow(kAdgAllow),
+      : important(MakeFc(kAdgImportant, kAdgImportantHeads, kAdgImportantCount, false)),
+        block_all(MakeFc(kAdgBlockAll, kAdgBlockAllHeads, kAdgBlockAllCount, false)),
+        block_3p(MakeFc(kAdgBlock3p, kAdgBlock3pHeads, kAdgBlock3pCount, false)),
+        allow(MakeFc(kAdgAllow, kAdgAllowHeads, kAdgAllowCount, false)),
+        typed(MakeFc(kAdgTyped, kAdgTypedHeads, kAdgTypedCount, true)),
         cos_keys(kAdgCosKeys) {}
-  SortedList important;
-  SortedList block_all;
-  SortedList block_3p;
-  SortedList allow;
+  FcList important;
+  FcList block_all;
+  FcList block_3p;
+  FcList allow;
+  FcList typed;
   SortedList cos_keys;
 };
 
@@ -367,28 +444,40 @@ struct Verdict {
   std::string why;
 };
 
+// The host and each parent domain ("a.b.c" -> "b.c" -> "c") against the host
+// tables. Tables hold reversed names, so the parents are prefixes of the
+// reversed host that end before a '.'.
 void CheckHostLists(const Data& d, const Request& r, Verdict* v) {
   const std::string& host = r.host;
-  size_t s = 0;
-  while (s < host.size()) {
-    const char* p = host.data() + s;
-    size_t n = host.size() - s;
-    if (d.important.Contains(p, n)) {
+  const std::string rev(host.rbegin(), host.rend());
+  size_t n = rev.size();
+  while (n > 0) {
+    const char* p = rev.data();
+    const std::string name = host.substr(host.size() - n);
+    uint32_t types = 0;
+    if (d.important.Find(p, n, nullptr)) {
       v->block_important = true;
-      v->why = "||" + host.substr(s) + "^$important";
+      v->why = "||" + name + "^$important";
     }
-    if (d.allow.Contains(p, n)) v->allow = true;
-    if (d.block_all.Contains(p, n)) {
+    if (d.allow.Find(p, n, nullptr)) v->allow = true;
+    if (d.block_all.Find(p, n, nullptr)) {
       v->block = true;
-      if (v->why.empty()) v->why = "||" + host.substr(s) + "^";
+      if (v->why.empty()) v->why = "||" + name + "^";
     }
-    if (r.third_party && d.block_3p.Contains(p, n)) {
+    if (r.third_party && d.block_3p.Find(p, n, nullptr)) {
       v->block = true;
-      if (v->why.empty()) v->why = "||" + host.substr(s) + "^$third-party";
+      if (v->why.empty()) v->why = "||" + name + "^$third-party";
     }
-    size_t dot = host.find('.', s);
+    if (r.type && d.typed.Find(p, n, &types)) {
+      const uint32_t mask = (types & 0xffffu) | (r.third_party ? (types >> 16) : 0u);
+      if (mask & r.type) {
+        v->block = true;
+        if (v->why.empty()) v->why = name + " (typed)";
+      }
+    }
+    size_t dot = rev.rfind('.', n - 1);
     if (dot == std::string::npos) break;
-    s = dot + 1;
+    n = dot;
   }
 }
 
