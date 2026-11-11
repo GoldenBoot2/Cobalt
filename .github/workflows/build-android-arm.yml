@@ -17,6 +17,10 @@ on:
         default: "gold"
         type: choice
         options: [gold, qa]
+      goldenboot:
+        description: "Apply GoldenBoot patches (AdGuard filter lists, lower memory limits)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -41,6 +45,21 @@ jobs:
           ref: ${{ inputs.cobalt_ref }}
           fetch-depth: 1
           path: cobalt
+
+      - name: Check out GoldenBoot patches
+        if: ${{ inputs.goldenboot }}
+        uses: actions/checkout@v7
+        with:
+          path: gb
+          fetch-depth: 1
+
+      - name: Apply GoldenBoot patches
+        if: ${{ inputs.goldenboot }}
+        # AdGuard Base (2), Tracking Protection (3) and Mobile Ads (11) lists, downloaded now.
+        run: |
+          python3 gb/patches/adguard_rules.py cobalt/cobalt/network/adguard_rules.inc 2 3 11
+          python3 gb/patches/apply.py cobalt
+          cd cobalt && git status --short && git diff --stat
 
       - name: Build the Docker build images
         working-directory: cobalt
@@ -83,13 +102,13 @@ jobs:
           find cobalt/out -name "*.apk" -size +1M -print
           apk=$(find cobalt/out -name "cobalt.apk" | head -n 1)
           test -n "$apk"
-          cp "$apk" "dist/cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}.apk"
+          cp "$apk" "dist/cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}.apk"
           sha256sum dist/*.apk
 
       - name: Upload the APK
         uses: actions/upload-artifact@v7
         with:
-          name: cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}
+          name: cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}
           path: dist/*.apk
           retention-days: 30
           compression-level: 0
