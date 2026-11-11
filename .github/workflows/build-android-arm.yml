@@ -140,6 +140,36 @@ jobs:
           path: ccache
           key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
 
+      # Build-speed check: the generated V8 binding files miss the compiler cache in every
+      # build. Record every input of a few of them (checksums) and their compile commands,
+      # so two runs can be compared to find what changes between builds.
+      - name: Fingerprint generated binding inputs
+        if: success()
+        continue-on-error: true
+        run: |
+          pip install --quiet --break-system-packages ninja || pip install --quiet ninja
+          fp="$GITHUB_WORKSPACE/fp"; mkdir -p "$fp"
+          cd cobalt/out/android-arm_${{ inputs.config }}
+          for o in obj/cobalt/browser/generated_bindings_sources/v8c_storage_event.o \
+                   obj/cobalt/browser/generated_bindings_sources/v8c_abort_signal.o \
+                   obj/cobalt/browser/generated_types_sources/v8c_algorithm.o \
+                   obj/cobalt/browser/generated_types_sources/v8c_aes_ctr_params.o; do
+            n=$(basename "$o" .o)
+            ninja -t deps "$o" | tail -n +2 | awk 'NF{print $1}' | sort | while read -r f; do
+              sha256sum "$f"; done > "$fp/$n.deps.txt"
+            ninja -t commands "$o" | tail -n 1 > "$fp/$n.cmd.txt"
+            wc -l "$fp/$n.deps.txt"
+          done
+
+      - name: Upload the fingerprints
+        if: success()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: fingerprints-${{ github.run_id }}
+          path: fp/
+          retention-days: 7
+
       - name: Collect the APK
         run: |
           mkdir -p dist
