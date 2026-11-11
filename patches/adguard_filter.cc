@@ -103,6 +103,12 @@ uint32_t TypeFromCsp(int csp_type) {
 
 bool Decide(const GURL& url, const GURL& page, uint32_t type) {
   if (!url.SchemeIsHTTPOrHTTPS() && !url.SchemeIsWSOrWSS()) return false;
+  if (url.host() == "gb-debug.invalid") {  // debug channel (adguard_engine.cc)
+    std::string q = url.query();
+    if (q.size() > 600) q.resize(600);
+    GB_LOG("js %s: %s", page.host().c_str(), q.c_str());
+    return true;
+  }
   if (ReadMode() & kModeNoNetwork) return false;
   InitOnce();
   Request r;

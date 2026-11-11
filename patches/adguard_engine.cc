@@ -528,6 +528,25 @@ void AppendJsString(std::string* out, const char* s, size_t n) {
   out->push_back('"');
 }
 
+// Debug channel: release builds of Cobalt drop console output, so page errors,
+// console.error/warn and failed fetch() calls are reported as a request to
+// https://gb-debug.invalid/?<message>; adguard_filter.cc logs and blocks it.
+const char kDebugHead[] =
+    "var gbn=0;function gbr(m){if(gbn++>=40)return;try{var x=new XMLHttpRequest();"
+    "x.open('GET','https://gb-debug.invalid/?'+encodeURIComponent(String(m).slice(0,400)));"
+    "x.send();}catch(e){}}\n"
+    "try{window.addEventListener('error',function(e){gbr('error: '+(e&&e.message)+' @'+"
+    "(e&&e.filename)+':'+(e&&e.lineno)+':'+(e&&e.colno));});"
+    "window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;"
+    "gbr('rejection: '+(r&&(r.name+': '+r.message)||r));});}catch(e){}\n"
+    "try{['error','warn'].forEach(function(k){var f=console[k];console[k]=function(){"
+    "var a=[];for(var i=0;i<arguments.length;i++)a.push(String(arguments[i]));"
+    "gbr('console.'+k+': '+a.join(' '));if(f)return f.apply(console,arguments);};});}catch(e){}\n"
+    "try{if(window.fetch){var gof=window.fetch;window.fetch=function(u,o){"
+    "var p=gof.apply(this,arguments);return p.then(null,function(e){"
+    "gbr('fetch failed: '+String(u&&u.url||u).slice(0,150)+' mode='+(o&&o.mode)+' '+"
+    "(e&&(e.name+': '+e.message)||e));throw e;});};}else{gbr('no window.fetch');}}catch(e){}\n";
+
 // Applies css/ext once the document exists, and the generic lookup table G
 // ("key\tselector" lines) to elements as they appear or change class/id.
 const char kInjectTail[] =
@@ -775,6 +794,7 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
     return std::string();
 
   std::string out = "(function(){\n";
+  out += kDebugHead;
   std::vector<uint32_t> defined;
   for (const auto& sl : scriptlets) {
     // "index\tsource-json\targs-json"
