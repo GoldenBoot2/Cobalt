@@ -97,15 +97,42 @@ jobs:
           docker image ls
           df -h /
 
+      # Compiler cache: Cobalt's build uses sccache when SCCACHE=1 and SCCACHE_DIR are set.
+      # The cache folder is mounted into the container as /root/ccache (docker-compose.yml
+      # CCACHE_DIR) and kept between runs with the Actions cache, so unchanged files are not
+      # compiled again. The first run fills it; later runs only compile what changed.
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ccache
+          key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
+          restore-keys: sccache-android-arm-${{ inputs.config }}-
+
       - name: Build Cobalt
         working-directory: cobalt
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/ccache
         run: |
+          mkdir -p "$CCACHE_DIR/sccache"
+          du -sh "$CCACHE_DIR" || true
           docker compose run --rm -T \
             -e CONFIG=${{ inputs.config }} \
             -e NINJA_PARALLEL=4 \
             -e TARGET=cobalt_install \
+            -e SCCACHE=1 \
+            -e SCCACHE_DIR=/root/ccache/sccache \
+            -e SCCACHE_CACHE_SIZE=6G \
             android-arm
+          sudo chown -R "$(id -u):$(id -g)" "$CCACHE_DIR"
+          du -sh "$CCACHE_DIR"
           df -h /
+
+      - name: Save the compiler cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ccache
+          key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
 
       - name: Collect the APK
         run: |
