@@ -26,7 +26,9 @@ The run builds the official source with Cobalt's own Docker setup and uploads
   fails with `ERR_BLOCKED_BY_CLIENT`. Blocked hosts are logged to logcat with the tag `GBAdGuard`.
 - **Lower memory limits** for 512 MB TVs: smaller image, Skia, font and glyph-atlas caches,
   a 16 MB video buffer budget and 30 s of played media kept in memory.
-- `apply.py <cobalt dir>` applies both; every edit fails loudly if its anchor is missing.
+- **Content-Security-Policy header optional:** release builds otherwise refuse a start page that
+  sends no CSP header. HTTPS and CORS stay required, and a CSP header that is sent is still enforced.
+- `apply.py <cobalt dir>` applies all of them; every edit fails loudly if its anchor is missing.
 
 ## Tools
 

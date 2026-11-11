@@ -73,4 +73,13 @@ for name, val in (('max_video_buffer_budget', 16),                          # MB
     x = re.sub(pat, r'\g<1>%d\g<2>' % val, x)
 open(p, 'w', encoding='utf-8', newline='\n').write(x)
 print('patched', rro)
+
+# 3. Content-Security-Policy header optional: our own start pages (e.g. a Cloudflare site) send
+# no CSP header, and release builds otherwise refuse to load them ("Can't connect right now").
+# HTTPS and CORS stay required; a page that does send a CSP header is still enforced.
+APP = 'cobalt/browser/application.cc'
+edit(APP, 'SecurityFlags security_flags{csp::kCSPRequired, network::kHTTPSRequired,',
+     'SecurityFlags security_flags{csp::kCSPOptional, network::kHTTPSRequired,')
+edit(APP, '#if defined(COBALT_FORCE_CSP)\n  security_flags.csp_header_policy = csp::kCSPRequired;',
+     '#if defined(COBALT_FORCE_CSP)\n  security_flags.csp_header_policy = csp::kCSPOptional;')
 print('all GoldenBoot patches applied')
