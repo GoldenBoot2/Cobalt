@@ -561,7 +561,7 @@ const char kPolyfills[] =
 // console.error/warn and failed fetch() calls are reported as a request to
 // https://gb-debug.invalid/?<message>; adguard_filter.cc logs and blocks it.
 const char kDebugHead[] =
-    "var gbn=0;function gbr(m){if(gbn++>=60)return;try{var x=new XMLHttpRequest();"
+    "var gbn=0;function gbr(m){if(gbn++>=150)return;try{var x=new XMLHttpRequest();"
     "x.open('GET','https://gb-debug.invalid/?'+encodeURIComponent(String(m).slice(0,400)));"
     "x.send();}catch(e){}}\n"
     "function gbs(e){return e?(e.name+': '+e.message+' | '+String(e.stack||'').slice(0,300)):String(e);}\n"
@@ -589,7 +589,35 @@ const char kDebugHead[] =
     "var p;try{p=gof.apply(this,arguments);}catch(e){gbr('fetch threw: '+gbs(e));throw e;}"
     "return p.then(null,function(e){"
     "gbr('fetch failed: '+String(u&&u.url||u).slice(0,150)+' mode='+(o&&o.mode)+' '+"
-    "(e&&(e.name+': '+e.message)||e));throw e;});};}else{gbr('no window.fetch');}}catch(e){}\n";
+    "(e&&(e.name+': '+e.message)||e));throw e;});};}else{gbr('no window.fetch');}}catch(e){}\n"
+    // Ad probes: what the video-info answers contain before (RAW) and after (FINAL)
+    // the scriptlets, what Cobalt supports, and the scriptlets' own log lines.
+    "var gyp=/youtubei\\/v1\\/(player|next|reel|get_watch)|\\/player\\?|get_watch/;\n"
+    "function gad(t){return 'len='+t.length+' adPlacements='+(t.indexOf('\"adPlacements\"')>=0)+"
+    "' playerAds='+(t.indexOf('\"playerAds\"')>=0)+' adSlots='+(t.indexOf('\"adSlots\"')>=0)+"
+    "' ssap='+(t.indexOf('ssapConfig')>=0||t.indexOf('ssapPrerollEnabled')>=0);}\n"
+    "function gprobe(tag,f){return function(u,o){var s=String(u&&u.url||u);"
+    "var p=f.apply(this,arguments);if(gyp.test(s)&&p&&p.then){p.then(function(r){try{"
+    "if(!r||!r.clone){gbr(tag+' no clone '+s.slice(0,80));return;}"
+    "r.clone().text().then(function(t){gbr(tag+' '+s.slice(0,60)+' '+gad(t));},"
+    "function(e){gbr(tag+' text failed '+gbs(e));});}catch(e){gbr(tag+' probe err '+gbs(e));}},"
+    "function(){});}return p;};}\n"
+    "try{if(window.fetch)window.fetch=gprobe('RAW',window.fetch);}catch(e){}\n"
+    "var gfp=window.fetch;\n"
+    "try{var gxo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){"
+    "var s=String(u);if(gyp.test(s)){this.addEventListener('load',function(){try{"
+    "gbr('XHR '+s.slice(0,60)+' '+gad(String(this.responseText||'')));}catch(e){}});}"
+    "return gxo.apply(this,arguments);};}catch(e){}\n"
+    "try{gbr('env Proxy='+typeof Proxy+' Reflect='+typeof Reflect+' Response='+typeof Response+"
+    "' clone='+(typeof Response!=='undefined'&&typeof Response.prototype.clone)+"
+    "' Request='+typeof Request+' Headers='+typeof Headers);"
+    "if(typeof Response==='function'){try{new Response('{\"a\":1}',{status:200}).json().then("
+    "function(j){gbr('new Response ok a='+j.a);},function(e){gbr('new Response json failed '+gbs(e));});}"
+    "catch(e){gbr('new Response threw '+gbs(e));}}}catch(e){}\n"
+    "try{var gcl=console.log;console.log=function(){var a=[];for(var i=0;i<arguments.length;i++)"
+    "a.push(String(arguments[i]));var t=a.join(' ');"
+    "if(/json-prune|set-constant|replace-|adPlacements|adSlots|playerAds|AdGuard|scriptlet/i.test(t))"
+    "gbr('log: '+t.slice(0,300));if(gcl)return gcl.apply(console,arguments);};}catch(e){}\n";
 
 // Applies css/ext once the document exists, and the generic lookup table G
 // ("key\tselector" lines) to elements as they appear or change class/id.
@@ -841,6 +869,7 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
   out += kPolyfills;
   out += kDebugHead;
   std::vector<uint32_t> defined;
+  std::string sl_names;
   for (const auto& sl : scriptlets) {
     // "index\tsource-json\targs-json"
     const char* t1 = static_cast<const char*>(memchr(sl.first, '\t', sl.second));
@@ -855,12 +884,24 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
       defined.push_back(idx);
       out += "var " + fn + "=(" + kAdgSlCode[idx] + ");\n";
     }
-    out += "try{" + fn + "(";
-    out.append(t1 + 1, t2 - t1 - 1);
-    out += ",";
+    // Source JSON with verbose on, so the scriptlets log what they do (reported above).
+    std::string src(t1 + 1, t2 - t1 - 1);
+    const size_t vpos = src.find("\"verbose\":false");
+    if (vpos != std::string::npos) src.replace(vpos, 15, "\"verbose\":true");
+    std::string name = "?";
+    const size_t npos_ = src.find("\"name\":\"");
+    if (npos_ != std::string::npos) {
+      const size_t b = src.find('"', npos_ + 8);
+      if (b != std::string::npos) name = src.substr(npos_ + 8, b - npos_ - 8);
+    }
+    sl_names += name + " ";
+    out += "try{" + fn + "(" + src + ",";
     out.append(t2 + 1, end - t2 - 1);
-    out += ");}catch(e){}\n";
+    out += ");}catch(e){gbr('scriptlet " + name + " threw '+gbs(e));}\n";
   }
+  out += "gbr('scriptlets ran: " + sl_names + "');\n";
+  out += "try{gbr('fetch replaced by scriptlets: '+(window.fetch!==gfp));"
+         "if(window.fetch)window.fetch=gprobe('FINAL',window.fetch);}catch(e){}\n";
   for (const auto& sc : scripts) {
     out += "try{\n";
     out.append(sc.first, sc.second);
