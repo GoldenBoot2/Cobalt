@@ -1,6 +1,7 @@
 """GitHub Actions helper for GoldenBoot2/Cobalt. Token read from ~/.claude/secrets/github-cobalt-token.txt, never printed.
 Usage:
   python -I gh_actions.py run [ref] [config]     start the build
+  python -I gh_actions.py cancel <run_id>        cancel a run
   python -I gh_actions.py status                 latest runs + job steps
   python -I gh_actions.py log <job_id> [lines]   tail of a job log
   python -I gh_actions.py artifacts <run_id>     list artifacts
@@ -52,6 +53,8 @@ if cmd == "run":
     ref = sys.argv[2] if len(sys.argv) > 2 else "25.lts.40"
     cfg = sys.argv[3] if len(sys.argv) > 3 else "gold"
     print(call("/actions/workflows/%s/dispatches" % WF, {"ref": "main", "inputs": {"cobalt_ref": ref, "config": cfg}}))
+elif cmd == "cancel":
+    print(call("/actions/runs/%s/cancel" % sys.argv[2], {}))
 elif cmd == "status":
     for r in call("/actions/runs?per_page=3")["workflow_runs"]:
         print("run", r["id"], r["status"], r["conclusion"], r["created_at"], r["updated_at"])
