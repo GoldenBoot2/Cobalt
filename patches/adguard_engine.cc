@@ -528,6 +528,35 @@ void AppendJsString(std::string* out, const char* s, size_t n) {
   out->push_back('"');
 }
 
+// DOM functions every current browser has but Cobalt 25 lacks (found with the
+// debug channel: Element.closest, NodeList.forEach); added only when missing.
+const char kPolyfills[] =
+    "try{(function(){var E=window.Element&&Element.prototype;if(E){"
+    "if(!E.matches)E.matches=E.webkitMatchesSelector||function(s){"
+    "var m=(this.ownerDocument||document).querySelectorAll(s),i=m.length;"
+    "while(--i>=0&&m[i]!==this);return i>-1;};"
+    "if(!E.closest)E.closest=function(s){var el=this;while(el&&el.nodeType===1){"
+    "if(el.matches(s))return el;el=el.parentElement||el.parentNode;}return null;};"
+    "if(!E.remove)E.remove=function(){if(this.parentNode)this.parentNode.removeChild(this);};"
+    "var nodes=function(a){var f=document.createDocumentFragment();"
+    "for(var i=0;i<a.length;i++){var n=a[i];"
+    "f.appendChild(n&&typeof n==='object'?n:document.createTextNode(String(n)));}return f;};"
+    "if(!E.append)E.append=function(){this.appendChild(nodes(arguments));};"
+    "if(!E.prepend)E.prepend=function(){this.insertBefore(nodes(arguments),this.firstChild);};"
+    "if(!E.before)E.before=function(){if(this.parentNode)"
+    "this.parentNode.insertBefore(nodes(arguments),this);};"
+    "if(!E.after)E.after=function(){if(this.parentNode)"
+    "this.parentNode.insertBefore(nodes(arguments),this.nextSibling);};"
+    "if(!E.replaceWith)E.replaceWith=function(){if(this.parentNode)"
+    "this.parentNode.replaceChild(nodes(arguments),this);};"
+    "if(!E.toggleAttribute)E.toggleAttribute=function(n,f){var h=this.hasAttribute(n);"
+    "if(f===undefined)f=!h;if(f)this.setAttribute(n,'');else this.removeAttribute(n);return f;};}"
+    "var it=typeof Symbol!=='undefined'&&Symbol.iterator;"
+    "[window.NodeList,window.HTMLCollection,window.DOMTokenList].forEach(function(C){"
+    "var P=C&&C.prototype;if(!P)return;"
+    "if(C!==window.HTMLCollection&&!P.forEach)P.forEach=Array.prototype.forEach;"
+    "if(it&&!P[it])P[it]=Array.prototype[it];});})();}catch(e){}\n";
+
 // Debug channel: release builds of Cobalt drop console output, so page errors,
 // console.error/warn and failed fetch() calls are reported as a request to
 // https://gb-debug.invalid/?<message>; adguard_filter.cc logs and blocks it.
@@ -809,6 +838,7 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
     return std::string();
 
   std::string out = "(function(){\n";
+  out += kPolyfills;
   out += kDebugHead;
   std::vector<uint32_t> defined;
   for (const auto& sl : scriptlets) {
