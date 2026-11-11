@@ -122,15 +122,19 @@ jobs:
           df -h /
 
       # The container writes the cache as root; the cache action runs as the runner user.
+      # A cancelled or early-failed run has an empty or tiny cache; saving it would make it the
+      # newest one, and the next run would restore it and compile from scratch (~70 min).
       - name: Make the compiler cache readable
+        id: ccache_size
         if: always()
         run: |
           mkdir -p ccache
           sudo chown -R "$(id -u):$(id -g)" ccache
           du -sh ccache
+          echo "mb=$(du -sm ccache | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Save the compiler cache
-        if: always()
+        if: always() && steps.ccache_size.outputs.mb >= 50
         uses: actions/cache/save@v6
         with:
           path: ccache
