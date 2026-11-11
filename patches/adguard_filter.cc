@@ -46,7 +46,7 @@ void InitOnce() {
 }
 
 // Test switches: adb shell setprop debug.gb.adguard <Mode bits> (0 = all on).
-uint32_t Mode() {
+uint32_t ReadMode() {
 #if defined(__ANDROID__)
   char v[PROP_VALUE_MAX] = {0};
   if (__system_property_get("debug.gb.adguard", v) > 0)
@@ -103,7 +103,7 @@ uint32_t TypeFromCsp(int csp_type) {
 
 bool Decide(const GURL& url, const GURL& page, uint32_t type) {
   if (!url.SchemeIsHTTPOrHTTPS() && !url.SchemeIsWSOrWSS()) return false;
-  if (Mode() & kModeNoNetwork) return false;
+  if (ReadMode() & kModeNoNetwork) return false;
   InitOnce();
   Request r;
   r.url = url.spec();
@@ -140,7 +140,7 @@ std::string PageScript(const GURL& page) {
   const std::string host = page.host();
   if (host.empty()) return std::string();
   InitOnce();
-  const uint32_t mode = Mode();
+  const uint32_t mode = ReadMode();
   if (mode & kModeNoPageScript) {
     GB_LOG("page script for %s: off (mode %u)", host.c_str(), mode);
     return std::string();

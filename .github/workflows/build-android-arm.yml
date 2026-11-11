@@ -127,6 +127,14 @@ jobs:
           du -sh "$CCACHE_DIR"
           df -h /
 
+      # The container writes the cache as root; the cache action runs as the runner user.
+      - name: Make the compiler cache readable
+        if: always()
+        run: |
+          mkdir -p ccache
+          sudo chown -R "$(id -u):$(id -g)" ccache
+          du -sh ccache
+
       - name: Save the compiler cache
         if: always()
         uses: actions/cache/save@v6
