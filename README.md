@@ -20,10 +20,27 @@ The run builds the official source with Cobalt's own Docker setup and uploads
 ## GoldenBoot patches (`patches/`)
 
 - **AdGuard filter lists:** `adguard_rules.py` downloads the AdGuard Base, Tracking Protection
-  and Mobile Ads lists at build time and converts their whole-domain network rules (`||host^`,
-  `$third-party`, `$important`, `@@` exceptions) into `cobalt/network/adguard_rules.inc`.
-  `adguard_filter.cc` checks every request in `NetworkDelegate::OnBeforeURLRequest`; a match
-  fails with `ERR_BLOCKED_BY_CLIENT`. Blocked hosts are logged to logcat with the tag `GBAdGuard`.
+  and Mobile Ads lists at build time and compiles them into `cobalt/network/adguard_rules.inc`:
+  - network rules: `||`, `|`, `*`, `^` patterns with `$domain`, `$third-party`/`$first-party`,
+    content types, `$important`, `$match-case`, `$denyallow`, `$badfilter` and `@@` exceptions,
+    including page-level `$document`, `$elemhide`, `$generichide`, `$specifichide`, `$jsinject`
+    and `$urlblock`;
+  - cosmetic rules: `##` element hiding, `#?#` extended selectors (AdGuard ExtendedCss),
+    `#$#`/`#$?#` CSS, `#%#//scriptlet(...)` (AdGuard Scriptlets) and `#%#` scripts, with their
+    `#@...#` exceptions.
+
+  Not compiled: regex network rules and modifiers that need a full browser extension
+  (`$redirect`, `$removeparam`, `$csp`, `$replace`, `$header`, `$cookie`, `$popup`, ...), and
+  `$$` HTML filtering.
+
+  `adguard_engine.cc` (plain C++, testable on its own) applies them. `adguard_filter.cc`
+  connects it to Cobalt: every request in `NetworkDelegate::OnBeforeURLRequest`, typed resource
+  loads in `CspDelegateSecure::CanLoad` (blocked = `ERR_BLOCKED_BY_CLIENT` / refused load), and
+  a per-page script run by `WebModule` before the page's own scripts. Blocked requests and page
+  scripts are logged to logcat with the tag `GBAdGuard`.
+
+  AdGuard Scriptlets and ExtendedCss (GPL-3.0, by AdGuard) are downloaded from npm at build
+  time, pinned by version and checksum.
 - **Lower memory limits** for 512 MB TVs: smaller image, Skia, font and glyph-atlas caches,
   a 16 MB video buffer budget and 30 s of played media kept in memory.
 - **Content-Security-Policy header optional:** release builds otherwise refuse a start page that

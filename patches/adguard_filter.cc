@@ -1,13 +1,14 @@
-// GoldenBoot: AdGuard filter-list network blocking for Cobalt.
+// GoldenBoot: AdGuard filter lists for Cobalt - Chromium/Cobalt side.
+// The rule engine is adguard_engine.cc; this file converts URLs and logs.
 
 #include "cobalt/network/adguard_filter.h"
 
 #include <stdint.h>
-#include <string.h>
 
+#include <mutex>
 #include <string>
-#include <vector>
 
+#include "cobalt/network/adguard_engine.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
 #if defined(__ANDROID__)
@@ -20,141 +21,115 @@ namespace adguard {
 
 namespace {
 
-// Defines kAdgImportant, kAdgBlockAll, kAdgBlock3p, kAdgAllow and kAdgInfo:
-// sorted host names, each ending in '\n'. Kept in read-only data; only an
-// offset table is built in memory.
-#include "cobalt/network/adguard_rules.inc"
+namespace rcd = net::registry_controlled_domains;
 
-class HostList {
- public:
-  explicit HostList(const char* blob) : blob_(blob) {
-    const char* p = blob;
-    while (*p) {
-      offsets_.push_back(static_cast<uint32_t>(p - blob));
-      const char* nl = strchr(p, '\n');
-      if (!nl) break;
-      p = nl + 1;
-    }
-  }
-
-  bool Contains(const char* s, size_t n) const {
-    size_t lo = 0;
-    size_t hi = offsets_.size();
-    while (lo < hi) {
-      size_t mid = lo + (hi - lo) / 2;
-      int c = Compare(blob_ + offsets_[mid], s, n);
-      if (c == 0) return true;
-      if (c < 0) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-    return false;
-  }
-
-  size_t size() const { return offsets_.size(); }
-
- private:
-  // Compares a '\n'-terminated entry with s[0, n).
-  static int Compare(const char* e, const char* s, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-      unsigned char a = e[i] == '\n' ? 0 : static_cast<unsigned char>(e[i]);
-      unsigned char b = static_cast<unsigned char>(s[i]);
-      if (a != b) return a < b ? -1 : 1;
-    }
-    return e[n] == '\n' ? 0 : 1;
-  }
-
-  const char* blob_;
-  std::vector<uint32_t> offsets_;
-};
-
-struct Lists {
-  Lists()
-      : important(kAdgImportant),
-        block_all(kAdgBlockAll),
-        block_3p(kAdgBlock3p),
-        allow(kAdgAllow) {}
-  HostList important;
-  HostList block_all;
-  HostList block_3p;
-  HostList allow;
-};
-
-const Lists& GetLists() {
-  static const Lists* lists = [] {
-    Lists* l = new Lists();
 #if defined(__ANDROID__)
-    __android_log_print(ANDROID_LOG_INFO, "GBAdGuard",
-                        "%s: important %zu, block %zu, block-3p %zu, allow %zu",
-                        kAdgInfo, l->important.size(), l->block_all.size(),
-                        l->block_3p.size(), l->allow.size());
+#define GB_LOG(...) __android_log_print(ANDROID_LOG_INFO, "GBAdGuard", __VA_ARGS__)
+#else
+#define GB_LOG(...) ((void)0)
 #endif
-    return l;
-  }();
-  return *lists;
+
+std::once_flag g_init_once;
+std::mutex* g_page_mutex = nullptr;  // heap: no exit-time destructor
+std::string* g_last_page = nullptr;
+uint32_t g_last_page_flags = 0;
+
+void InitOnce() {
+  std::call_once(g_init_once, [] {
+    g_page_mutex = new std::mutex();
+    g_last_page = new std::string();
+    std::string info = EngineInfo();
+    GB_LOG("%s", info.c_str());
+  });
 }
 
-bool IsThirdParty(const GURL& url, const GURL& initiator) {
-  if (!initiator.is_valid() || initiator.host().empty()) return false;
-  return !net::registry_controlled_domains::SameDomainOrHost(
-      url, initiator,
-      net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+size_t RegistryLength(const std::string& host) {
+  size_t n = rcd::GetCanonicalHostRegistryLength(
+      host, rcd::EXCLUDE_UNKNOWN_REGISTRIES, rcd::EXCLUDE_PRIVATE_REGISTRIES);
+  return n == std::string::npos ? 0 : n;
 }
 
-void LogBlocked(const std::string& host, const char* why) {
-#if defined(__ANDROID__)
-  __android_log_print(ANDROID_LOG_INFO, "GBAdGuard", "blocked %s (%s)",
-                      host.c_str(), why);
-#endif
+uint32_t PageFlags(const GURL& page) {
+  if (!page.is_valid() || !page.SchemeIsHTTPOrHTTPS() || page.host().empty())
+    return 0;
+  const std::string& spec = page.spec();
+  InitOnce();
+  {
+    std::lock_guard<std::mutex> lock(*g_page_mutex);
+    if (*g_last_page == spec) return g_last_page_flags;
+  }
+  const std::string host = page.host();
+  uint32_t flags = EnginePageFlags(spec, host, RegistryLength(host));
+  std::lock_guard<std::mutex> lock(*g_page_mutex);
+  *g_last_page = spec;
+  g_last_page_flags = flags;
+  return flags;
+}
+
+// web::CspDelegate::ResourceType (cobalt/web/csp_delegate.h) -> ContentType.
+uint32_t TypeFromCsp(int csp_type) {
+  switch (csp_type) {
+    case 0:  // kFont
+      return kTypeFont;
+    case 1:  // kImage
+      return kTypeImage;
+    case 3:  // kMedia
+      return kTypeMedia;
+    case 4:  // kScript
+    case 6:  // kWorker
+      return kTypeScript;
+    case 5:  // kStyle
+      return kTypeStylesheet;
+    case 7:  // kXhr
+      return kTypeXhr;
+    case 8:  // kWebSocket
+      return kTypeWebsocket;
+    default:  // kLocation (navigation): not filtered
+      return 0;
+  }
+}
+
+bool Decide(const GURL& url, const GURL& page, uint32_t type) {
+  if (!url.SchemeIsHTTPOrHTTPS() && !url.SchemeIsWSOrWSS()) return false;
+  InitOnce();
+  Request r;
+  r.url = url.spec();
+  r.host = url.host();
+  if (r.host.empty()) return false;
+  const bool has_page = page.is_valid() && !page.host().empty();
+  if (has_page) {
+    r.page_host = page.host();
+    r.page_registry_len = RegistryLength(r.page_host);
+    r.third_party = !rcd::SameDomainOrHost(url, page, rcd::INCLUDE_PRIVATE_REGISTRIES);
+  }
+  r.type = type;
+  std::string why;
+  if (!EngineShouldBlock(r, has_page ? PageFlags(page) : 0, &why)) return false;
+  std::string shown = r.url.size() > 160 ? r.url.substr(0, 160) + "..." : r.url;
+  GB_LOG("blocked %s (%s)", shown.c_str(), why.c_str());
+  return true;
 }
 
 }  // namespace
 
 bool ShouldBlock(const GURL& url, const GURL& initiator) {
-  if (!url.SchemeIsHTTPOrHTTPS() && !url.SchemeIsWSOrWSS()) return false;
-  const std::string host = url.host();
-  if (host.empty()) return false;
-  const Lists& lists = GetLists();
+  return Decide(url, initiator, 0);
+}
 
-  // The host itself and every parent domain ("a.b.c" -> "b.c" -> "c"),
-  // like AdGuard's "||domain^" matching.
-  std::vector<size_t> starts(1, 0);
-  for (size_t i = 0; i + 1 < host.size(); ++i) {
-    if (host[i] == '.') starts.push_back(i + 1);
-  }
+bool ShouldBlockResource(const GURL& url, const GURL& page, int csp_type) {
+  uint32_t type = TypeFromCsp(csp_type);
+  if (!type) return false;
+  return Decide(url, page, type);
+}
 
-  for (size_t s : starts) {
-    if (lists.important.Contains(host.data() + s, host.size() - s)) {
-      LogBlocked(host, "important");
-      return true;
-    }
-  }
-  for (size_t s : starts) {
-    if (lists.allow.Contains(host.data() + s, host.size() - s)) return false;
-  }
-  bool third_known = false;
-  bool third = false;
-  for (size_t s : starts) {
-    const char* p = host.data() + s;
-    size_t n = host.size() - s;
-    if (lists.block_all.Contains(p, n)) {
-      LogBlocked(host, "rule");
-      return true;
-    }
-    if (lists.block_3p.Contains(p, n)) {
-      if (!third_known) {
-        third = IsThirdParty(url, initiator);
-        third_known = true;
-      }
-      if (third) {
-        LogBlocked(host, "third-party rule");
-        return true;
-      }
-    }
-  }
-  return false;
+std::string PageScript(const GURL& page) {
+  if (!page.is_valid() || !page.SchemeIsHTTPOrHTTPS()) return std::string();
+  const std::string host = page.host();
+  if (host.empty()) return std::string();
+  InitOnce();
+  std::string script = EnginePageScript(host, RegistryLength(host), PageFlags(page));
+  GB_LOG("page script for %s: %zu bytes", host.c_str(), script.size());
+  return script;
 }
 
 }  // namespace adguard

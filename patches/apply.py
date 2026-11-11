@@ -1,10 +1,13 @@
 """Applies the GoldenBoot changes to a youtube/cobalt 25.lts checkout.
 
 Usage: python3 apply.py <cobalt source dir>
- 1. AdGuard network blocking: copies adguard_filter.{h,cc} into cobalt/network, hooks it into
-    NetworkDelegate::OnBeforeURLRequest (blocked requests fail with ERR_BLOCKED_BY_CLIENT) and
-    adds it to cobalt/network/BUILD.gn. adguard_rules.inc is generated separately by
-    adguard_rules.py.
+ 1. AdGuard filter lists: copies adguard_engine.{h,cc} and adguard_filter.{h,cc} into
+    cobalt/network and adds them to its BUILD.gn; adguard_rules.inc is generated separately by
+    adguard_rules.py. Hooks:
+    - NetworkDelegate::OnBeforeURLRequest: every request (blocked = ERR_BLOCKED_BY_CLIENT);
+    - CspDelegateSecure::CanLoad: resource loads with their type (script, image, xhr...);
+    - WebModule::Impl: runs the page's cosmetic rules and scriptlets before the page's own
+      scripts.
  2. Lower memory limits for 512 MB TVs: built-in memory switches (CobaltActivity DEBUG_ARGS,
     used in release builds too) and the Android resource limits read by ResourceOverlay.
 Every edit checks that its anchor exists exactly once, so a changed source fails loudly.
@@ -27,7 +30,7 @@ def edit(rel, old, new, count=1):
 
 # 1. AdGuard network blocking
 net = os.path.join(SRC, 'cobalt', 'network')
-for f in ('adguard_filter.h', 'adguard_filter.cc'):
+for f in ('adguard_engine.h', 'adguard_engine.cc', 'adguard_filter.h', 'adguard_filter.cc'):
     shutil.copyfile(os.path.join(HERE, f), os.path.join(net, f))
     print('copied', f)
 assert os.path.isfile(os.path.join(net, 'adguard_rules.inc')), 'run adguard_rules.py first'
@@ -47,8 +50,49 @@ edit('cobalt/network/network_delegate.cc',
      '  if (url.SchemeIsCryptographic()')
 edit('cobalt/network/BUILD.gn',
      '    "network_delegate.cc",\n    "network_delegate.h",\n',
+     '    "adguard_engine.cc",\n    "adguard_engine.h",\n'
      '    "adguard_filter.cc",\n    "adguard_filter.h",\n    "adguard_rules.inc",\n'
      '    "network_delegate.cc",\n    "network_delegate.h",\n')
+
+# Typed checks in the CSP delegate (it knows the resource type and the document URL).
+edit('cobalt/web/csp_delegate.h',
+     '  csp::CSPHeaderPolicy csp_header_policy_;\n',
+     '  csp::CSPHeaderPolicy csp_header_policy_;\n\n'
+     '  // GoldenBoot: document URL for the AdGuard filter.\n'
+     '  GURL adguard_page_url_;\n')
+edit('cobalt/web/csp_delegate.cc',
+     '#include "base/bind.h"\n',
+     '#include "base/bind.h"\n#include "cobalt/network/adguard_filter.h"\n')
+edit('cobalt/web/csp_delegate.cc',
+     '  csp_header_policy_ = csp_header_policy;\n',
+     '  csp_header_policy_ = csp_header_policy;\n  adguard_page_url_ = url;\n')
+edit('cobalt/web/csp_delegate.cc',
+     '      did_redirect ? csp::kDidRedirect : csp::kDidNotRedirect;\n',
+     '      did_redirect ? csp::kDidRedirect : csp::kDidNotRedirect;\n\n'
+     '  // GoldenBoot: AdGuard rules for this resource type and document.\n'
+     '  if (::cobalt::network::adguard::ShouldBlockResource(\n'
+     '          url, adguard_page_url_, static_cast<int>(type))) {\n'
+     '    return false;\n'
+     '  }\n')
+
+# Cosmetic rules and scriptlets: run before the page's own scripts.
+edit('cobalt/browser/web_module.cc',
+     '#include "cobalt/browser/web_module.h"\n',
+     '#include "cobalt/browser/web_module.h"\n\n#include "cobalt/network/adguard_filter.h"\n')
+edit('cobalt/browser/web_module.cc',
+     '  web_context_->SetupFinished();\n  is_running_ = true;\n',
+     '  web_context_->SetupFinished();\n  is_running_ = true;\n\n'
+     '  // GoldenBoot: AdGuard cosmetic rules and scriptlets for this page.\n'
+     '  {\n'
+     '    const std::string adguard_script =\n'
+     '        ::cobalt::network::adguard::PageScript(data.initial_url);\n'
+     '    if (!adguard_script.empty()) {\n'
+     '      bool adguard_ok = false;\n'
+     '      web_context_->script_runner()->Execute(\n'
+     '          adguard_script, base::SourceLocation("[GoldenBoot AdGuard]", 1, 1),\n'
+     '          true /*mute_errors*/, &adguard_ok);\n'
+     '    }\n'
+     '  }\n')
 
 # 2. Lower memory limits
 ARGS = [

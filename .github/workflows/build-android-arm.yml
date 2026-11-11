@@ -55,9 +55,20 @@ jobs:
 
       - name: Apply GoldenBoot patches
         if: ${{ inputs.goldenboot }}
-        # AdGuard Base (2), Tracking Protection (3) and Mobile Ads (11) lists, downloaded now.
+        # AdGuard Base (2), Tracking Protection (3) and Mobile Ads (11) lists, downloaded now,
+        # plus AdGuard Scriptlets (corelibs build) and ExtendedCss from npm (pinned, checked).
         run: |
-          python3 gb/patches/adguard_rules.py cobalt/cobalt/network/adguard_rules.inc 2 3 11
+          mkdir -p /tmp/adg && cd /tmp/adg
+          curl -fsSL -o sl.tgz https://registry.npmjs.org/@adguard/scriptlets/-/scriptlets-2.5.1.tgz
+          curl -fsSL -o ec.tgz https://registry.npmjs.org/@adguard/extended-css/-/extended-css-2.3.0.tgz
+          printf '%s\n' \
+            '347c98bb6557e982ab2a4427a620446727b850dd286e1f98b7b27d7afd0ba12f  sl.tgz' \
+            'af78bc7d5f501b76487c9ed9e35e5a8b8234414bf31d3dc213e666a9a7956d9d  ec.tgz' | sha256sum -c
+          mkdir sl ec && tar -xzf sl.tgz -C sl && tar -xzf ec.tgz -C ec
+          cd "$GITHUB_WORKSPACE"
+          python3 gb/patches/adguard_rules.py cobalt/cobalt/network/adguard_rules.inc \
+            --scriptlets /tmp/adg/sl/package/dist/scriptlets.corelibs.json \
+            --extcss /tmp/adg/ec/package/dist/extended-css.min.js 2 3 11
           python3 gb/patches/apply.py cobalt
           cd cobalt && git status --short && git diff --stat
 
