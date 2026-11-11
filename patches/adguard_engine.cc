@@ -619,6 +619,30 @@ const char kDebugHead[] =
     "if(/json-prune|set-constant|replace-|adPlacements|adSlots|playerAds|AdGuard|scriptlet/i.test(t))"
     "gbr('log: '+t.slice(0,300));if(gcl)return gcl.apply(console,arguments);};}catch(e){}\n";
 
+// YouTube TV video-info answers (/youtubei/v1/player, a plain fetch the lists' rules
+// miss). Test switch bits (debug.gb.adguard): none = ad lists set to [], 16 = keys
+// deleted, 32 = re-serialised unchanged, 128 = original text in a new Response,
+// 64 = off. Reports sizes of the top-level parts of the first answers.
+const char kYtTv[] =
+    "try{(function(){var m=(typeof gbmode==='number'?gbmode:0);"
+    "if(m&64){gbr('yt off');return;}var of=window.fetch;if(!of)return;"
+    "var re=/youtubei\\/v1\\/(player|get_watch)/,n=0,ads=['adPlacements','adSlots','playerAds'];"
+    "function fix(o){if(!o||typeof o!=='object')return;ads.forEach(function(k){"
+    "if(k in o){if(m&16)delete o[k];else o[k]=[];}});}\n"
+    "window.fetch=function(u,opt){var s=String(u&&u.url||u);var p=of.apply(this,arguments);"
+    "if(!re.test(s))return p;return p.then(function(r){if(!r||!r.ok||!r.clone)return r;"
+    "return r.clone().text().then(function(t){var j;try{j=JSON.parse(t);}catch(e){"
+    "gbr('yt not json '+gbs(e));return r;}"
+    "if(!(m&(32|128))){fix(j);fix(j.playerResponse);}"
+    "var o=(m&128)?t:JSON.stringify(j);"
+    "if(n++<3){var ks=[];for(var k in j)ks.push(k+':'+JSON.stringify(j[k]).length);"
+    "gbr('yt mode='+m+' in='+t.length+' out='+o.length+' play='+"
+    "(j.playabilityStatus&&j.playabilityStatus.status)+' '+ks.join(' ').slice(0,320));}"
+    "var h={};try{r.headers.forEach(function(v,k){h[k]=v;});}catch(e){}"
+    "return new Response(o,{status:r.status,statusText:r.statusText,headers:h});},"
+    "function(e){gbr('yt text failed '+gbs(e));return r;});});};})();}"
+    "catch(e){gbr('yt err '+gbs(e));}\n";
+
 // Applies css/ext once the document exists, and the generic lookup table G
 // ("key\tselector" lines) to elements as they appear or change class/id.
 const char kInjectTail[] =
@@ -900,7 +924,10 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
     out += ");}catch(e){gbr('scriptlet " + name + " threw '+gbs(e));}\n";
   }
   out += "gbr('scriptlets ran: " + sl_names + "');\n";
-  out += "try{gbr('fetch replaced by scriptlets: '+(window.fetch!==gfp));"
+  out += "try{gbr('fetch replaced by scriptlets: '+(window.fetch!==gfp));}catch(e){}\n";
+  out += "var gbmode=" + std::to_string(mode) + ";\n";
+  out += kYtTv;
+  out += "try{"
          "if(window.fetch)window.fetch=gprobe('FINAL',window.fetch);}catch(e){}\n";
   for (const auto& sc : scripts) {
     out += "try{\n";

@@ -90,14 +90,10 @@ for fid in ids:
         lines.append(line)
     info.append('%s %s' % (title or 'filter ' + os.path.basename(fid), version))
 
-# Our own rules, compiled like list rules. YouTube TV asks for its video info with a plain
-# fetch('/youtubei/v1/player') (no query string), which the lists' 'player\?' patterns miss,
-# so the ad entries (adPlacements/adSlots) reached the player (debug probes, 2026-11-11).
-EXTRA = [
-    "youtube.com#%#//scriptlet('json-prune-fetch-response', 'playerResponse.adPlacements "
-    "playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots', '', "
-    "'/youtubei\\/v1\\/(player|get_watch)/')",
-]
+# Our own rules, compiled like list rules. (YouTube TV's /youtubei/v1/player answers are
+# handled in the engine page script, kYtTv: deleting the ad keys with json-prune-fetch-response
+# made playback fail with "Something went wrong", 2026-11-12.)
+EXTRA = []
 lines.extend(EXTRA)
 info.append('GoldenBoot extra rules %d' % len(EXTRA))
 
