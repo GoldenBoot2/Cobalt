@@ -98,6 +98,18 @@ edit('cobalt/browser/web_module.cc',
      '    }\n'
      '  }\n')
 
+# 3a. <noscript>: Cobalt always runs scripts but draws <noscript> content and applies <style>
+# elements inside it (pages use that to hide themselves when JavaScript is off). Such styles are
+# skipped here; the page script also hides <noscript> (adguard_engine.cc).
+edit('cobalt/dom/html_style_element.cc',
+     'void HTMLStyleElement::Process() {\n  Document* document = node_document();\n',
+     'void HTMLStyleElement::Process() {\n  Document* document = node_document();\n\n'
+     '  // GoldenBoot: scripting is always on, so a <style> inside <noscript> does\n'
+     '  // not apply.\n'
+     '  for (Element* p = parent_element(); p; p = p->parent_element()) {\n'
+     '    if (p->local_name() == std::string("noscript")) return;\n'
+     '  }\n')
+
 # 3b. CSS that Cobalt cannot parse (custom properties, clamp/min/max, inset) is rewritten
 # before parsing: css_compat.{h,cc} in cobalt/css_parser.
 cp = os.path.join(SRC, 'cobalt', 'css_parser')

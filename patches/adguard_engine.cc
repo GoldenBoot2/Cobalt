@@ -683,7 +683,8 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
   const bool generic_css = !(page_flags & (kPageElemhide | kPageGenerichide));
   const bool js = !(page_flags & kPageJsinject);
 
-  std::string css;
+  // Cobalt always runs scripts, so <noscript> content is never shown.
+  std::string css = "noscript{display:none!important}\n";
   std::vector<std::pair<const char*, size_t>> ext;
   std::vector<std::pair<const char*, size_t>> scriptlets;
   std::vector<std::pair<const char*, size_t>> scripts;
