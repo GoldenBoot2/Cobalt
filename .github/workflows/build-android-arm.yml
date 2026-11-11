@@ -102,6 +102,10 @@ jobs:
           key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
           restore-keys: sccache-android-arm-${{ inputs.config }}-
 
+      # PYTHONHASHSEED=0: Cobalt's binding generator iterates a Python set, so without a fixed
+      # seed v8c_gen_type_conversion.h comes out in a different order every build and ~185
+      # binding files miss the compiler cache (~9 min). GRADLE_USER_HOME inside the cache
+      # folder keeps Gradle and its Maven downloads between builds (also avoids HTTP 429).
       - name: Build Cobalt
         working-directory: cobalt
         env:
@@ -116,6 +120,7 @@ jobs:
             -e SCCACHE=1 \
             -e SCCACHE_DIR=/root/ccache/sccache \
             -e SCCACHE_CACHE_SIZE=6G \
+            -e PYTHONHASHSEED=0 \
             -e SCCACHE_LOG=debug \
             -e SCCACHE_ERROR_LOG=/root/ccache/sccache-server.log \
             -e GRADLE_USER_HOME=/root/ccache/gradle \
@@ -167,6 +172,9 @@ jobs:
             ninja -t commands "$o" | tail -n 1 > "$fp/$n.cmd.txt"
             wc -l "$fp/$n.deps.txt"
           done
+          # The generated header every binding file includes; it must be identical between builds.
+          cp gen/bindings/browser/source/v8c_gen_type_conversion.h "$fp/" || true
+          sha256sum gen/bindings/browser/source/v8c_gen_type_conversion.h || true
           # What sccache did with each compile (hit / miss / not cacheable and why).
           log="$GITHUB_WORKSPACE/sccache-server.log"
           if [ -f "$log" ]; then
