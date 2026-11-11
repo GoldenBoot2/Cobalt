@@ -25,3 +25,4 @@ tools/check_saved.py
 __pycache__/
 *.pyc
 .claude/
+tools/resign.py
