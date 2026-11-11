@@ -370,7 +370,38 @@ for k in keys:
     refs.extend(sorted(tidx[t] | 0x80000000 for t in cos_exc.get(k, ())))
 key_start.append(len(refs))
 generic = sorted(tidx[t] for t in cos_generic)
-generic_css = ''.join(t[1:] + '{display:none!important}\n' for t in texts if t in cos_generic and t[0] == 'H')
+
+
+def generic_key(sel):
+    """'.class' or '#id' that must be on the page for sel to match, or None."""
+    if '\\' in sel:
+        return None
+    s = re.sub(r'\[[^\]]*\]', '', sel)
+    while True:
+        s2 = re.sub(r':(not|is|where|has)\([^()]*\)', '', s)
+        if s2 == s:
+            break
+        s = s2
+    m = re.search(r'([.#])(-?[A-Za-z_][\w-]*)', s)
+    return m.group(1) + m.group(2) if m else None
+
+
+# Generic hiding: selectors with a class/id key are applied only when that class/id is on
+# the page (page script lookup, like uBlock Origin's generic cosmetic filtering); the rest is
+# plain CSS.
+keyed_lines, keyed_idx, unkeyed_css = [], [], []
+for t in texts:
+    if t in cos_generic and t[0] == 'H':
+        k = generic_key(t[1:])
+        if k:
+            keyed_lines.append(k + '\t' + t[1:])
+            keyed_idx.append(tidx[t])
+        else:
+            unkeyed_css.append(t[1:] + '{display:none!important}\n')
+generic_css = ''.join(unkeyed_css)
+keyed_js = json.dumps('\n'.join(keyed_lines))
+stats['generic_keyed'] = len(keyed_lines)
+stats['generic_unkeyed'] = len(unkeyed_css)
 for t in texts:
     assert '\n' not in t and '\r' not in t, t[:80]
 for k in keys:
@@ -457,6 +488,12 @@ with open(out, 'w', encoding='ascii', newline='\n') as f:
     carray(f, 'kAdgCosKeyStart', key_start)
     carray(f, 'kAdgCosRefs', refs)
     carray(f, 'kAdgCosGeneric', generic, count=True)
+    carray(f, 'kAdgCosGenericKeyed', keyed_idx, count=True)
+    # "key\tselector\n..." as a JavaScript string literal (json.dumps, ASCII only)
+    f.write('static const char kAdgGenericKeyedJs[] =\n')
+    for i in range(0, len(keyed_js), 3000):
+        f.write('    "%s"\n' % cbytes(keyed_js[i:i + 3000]))
+    f.write('    ;\n')
     f.write('static const char kAdgGenericCss[] =\n')
     css_lines = generic_css.splitlines(True) or ['']
     for i in range(0, len(css_lines), 40):
@@ -486,4 +523,5 @@ print('network rules', len(rules), 'indexed', len(tok_pairs), 'unindexed', len(n
 print('cosmetic entries', len(texts), 'generic', len(generic), 'generic css bytes', len(generic_css),
       'domain keys', len(keys), 'refs', len(refs))
 print('kinds', {k: sum(1 for t in texts if t[0] == k) for k in 'HCXSJ'})
+print('generic kinds', {k: sum(1 for t in cos_generic if t[0] == k) for k in 'HCXSJ'})
 print('output bytes', os.path.getsize(out))

@@ -405,6 +405,11 @@ bool IsGeneric(uint32_t i) {
   return std::binary_search(kAdgCosGeneric, kAdgCosGeneric + kAdgCosGenericCount, i);
 }
 
+bool IsKeyed(uint32_t i) {
+  return std::binary_search(kAdgCosGenericKeyed,
+                            kAdgCosGenericKeyed + kAdgCosGenericKeyedCount, i);
+}
+
 // Appends s as a JavaScript string literal.
 void AppendJsString(std::string* out, const char* s, size_t n) {
   static const char kHex[] = "0123456789abcdef";
@@ -434,17 +439,48 @@ void AppendJsString(std::string* out, const char* s, size_t n) {
   out->push_back('"');
 }
 
+// Applies css/ext once the document exists, and the generic lookup table G
+// ("key\tselector" lines) to elements as they appear or change class/id.
 const char kInjectTail[] =
     "function inject(){var r=document.documentElement;if(!r)return false;"
-    "if(css){var s=document.createElement('style');s.textContent=css;"
+    "injected=true;if(css){var s=document.createElement('style');s.textContent=css;"
     "(document.head||r).appendChild(s);}"
     "if(ext.length&&typeof ExtendedCss!=='undefined'){"
     "try{new ExtendedCss({cssRules:ext}).apply();}catch(e){}}"
     "return true;}\n"
-    "if(!inject()){try{var o=new MutationObserver(function(){"
-    "if(inject())o.disconnect();});"
-    "o.observe(document,{childList:true,subtree:true});}catch(e){"
-    "document.addEventListener('DOMContentLoaded',function(){inject();});}}\n"
+    "var gm=null,gd={},gs=null,pend=[],timer=0,injected=false;\n"
+    "function gmap(){if(gm)return gm;gm={};var L=G.split('\\n');"
+    "for(var i=0;i<L.length;i++){var l=L[i],t=l.indexOf('\\t');if(t<1)continue;"
+    "var k=l.substring(0,t),a=gm[k];if(!a)a=gm[k]=[];a.push(l.substring(t+1));}"
+    "for(var j=0;j<GX.length;j++)gd[GX[j]]=1;return gm;}\n"
+    "function gadd(a,out){for(var i=0;i<a.length;i++){var s=a[i];"
+    "if(!gd[s]){gd[s]=1;out.push(s+'{display:none!important}');}}}\n"
+    "function gcheck(el,out){var a,id=el.id;if(id&&typeof id==='string'){"
+    "a=gm['#'+id];if(a)gadd(a,out);}var c=el.className;"
+    "if(c&&typeof c==='string'){var cs=c.split(/\\s+/);"
+    "for(var k=0;k<cs.length;k++){if(!cs[k])continue;a=gm['.'+cs[k]];"
+    "if(a)gadd(a,out);}}}\n"
+    "function flush(){timer=0;var p=pend;pend=[];gmap();var out=[];"
+    "for(var i=0;i<p.length;i++){var n=p[i];if(!n||n.nodeType!==1)continue;"
+    "gcheck(n,out);if(n.getElementsByTagName){var all=n.getElementsByTagName('*');"
+    "for(var j=0;j<all.length;j++)gcheck(all[j],out);}}"
+    "if(out.length){var r=document.documentElement;if(!r)return;"
+    "if(!gs){gs=document.createElement('style');(document.head||r).appendChild(gs);}"
+    "gs.textContent+=out.join('\\n')+'\\n';}}\n"
+    "function queue(n){pend.push(n);if(!timer)timer=setTimeout(flush,200);}\n"
+    "inject();\n"
+    "try{var o=new MutationObserver(function(ms){"
+    "if(!injected){inject();if(injected&&!G)o.disconnect();}"
+    "if(!G)return;for(var i=0;i<ms.length;i++){var m=ms[i];"
+    "if(m.type==='attributes'){queue(m.target);}else{var an=m.addedNodes;"
+    "for(var j=0;j<an.length;j++)queue(an[j]);}}});"
+    "var opt={childList:true,subtree:true};"
+    "if(G){opt.attributes=true;opt.attributeFilter=['class','id'];}"
+    "if(!injected||G)o.observe(document,opt);}catch(e){"
+    "document.addEventListener('DOMContentLoaded',function(){"
+    "if(!injected)inject();"
+    "if(G&&document.documentElement)queue(document.documentElement);});}\n"
+    "if(G&&document.documentElement)queue(document.documentElement);\n"
     "})();\n";
 
 }  // namespace
@@ -516,7 +552,7 @@ uint32_t EnginePageFlags(const std::string& page_url, const std::string& page_ho
 }
 
 std::string EnginePageScript(const std::string& host, size_t registry_len,
-                             uint32_t page_flags) {
+                             uint32_t page_flags, uint32_t mode) {
   if (host.empty() || (page_flags & kPageDocument)) return std::string();
   const Data& d = GetData();
 
@@ -596,29 +632,56 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
     }
   };
 
-  // Generic entries. The prebuilt generic CSS is used unless this page has an
-  // exception for one of its selectors.
+  // Generic entries. Hiding selectors keyed by a class or id go to the page as
+  // a lookup table (G), applied only for classes/ids that appear on the page;
+  // the rest is the prebuilt CSS, rebuilt when this page has an exception for
+  // one of its selectors. Generic ExtendedCss rules are added only when the
+  // site has extended rules of its own (ExtendedCss is not loaded otherwise).
+  const bool generic_on = generic_css && !(mode & kModeNoGenericCosmetic);
+  const bool keyed_as_css = (mode & kModeGenericAsCss) != 0;
   bool rebuild_generic_css = false;
+  std::string keyed_excluded;  // JavaScript array items
   for (uint32_t e : exc) {
     size_t n = 0;
-    if (CosEntry(e, &n)[0] == 'H' && IsGeneric(e)) {
+    const char* t = CosEntry(e, &n);
+    if (t[0] != 'H' || !IsGeneric(e)) continue;
+    if (IsKeyed(e)) {
+      if (!keyed_excluded.empty()) keyed_excluded.push_back(',');
+      AppendJsString(&keyed_excluded, t + 1, n - 1);
+    } else {
       rebuild_generic_css = true;
-      break;
     }
   }
-  if (generic_css && !rebuild_generic_css) css.append(kAdgGenericCss);
+  if (generic_on && !rebuild_generic_css) css.append(kAdgGenericCss);
+  std::vector<std::pair<const char*, size_t>> generic_ext;
   for (size_t k = 0; k < kAdgCosGenericCount; ++k) {
     uint32_t e = kAdgCosGeneric[k];
     if (excluded(e)) continue;
     size_t n = 0;
-    if (CosEntry(e, &n)[0] == 'H' && !rebuild_generic_css) continue;
-    take(e, false);
+    const char* t = CosEntry(e, &n);
+    switch (t[0]) {
+      case 'H':
+        if (!generic_on) break;
+        if (IsKeyed(e) ? keyed_as_css : rebuild_generic_css) take(e, false);
+        break;
+      case 'X':
+        if (generic_on) generic_ext.emplace_back(t + 1, n - 1);
+        break;
+      case 'C':
+        if (generic_on) take(e, false);
+        break;
+      default:
+        take(e, false);  // scriptlets and scripts
+        break;
+    }
   }
   for (uint32_t i : inc) {
     if (!excluded(i) && !IsGeneric(i)) take(i, true);
   }
+  if (!ext.empty()) ext.insert(ext.end(), generic_ext.begin(), generic_ext.end());
+  const bool use_lookup = generic_on && !keyed_as_css && kAdgCosGenericKeyedCount > 0;
 
-  if (css.empty() && ext.empty() && scriptlets.empty() && scripts.empty())
+  if (css.empty() && ext.empty() && scriptlets.empty() && scripts.empty() && !use_lookup)
     return std::string();
 
   std::string out = "(function(){\n";
@@ -659,7 +722,9 @@ std::string EnginePageScript(const std::string& host, size_t registry_len,
     if (i) out.push_back(',');
     AppendJsString(&out, ext[i].first, ext[i].second);
   }
-  out += "];\n";
+  out += "];\nvar G=";
+  out += use_lookup ? kAdgGenericKeyedJs : "\"\"";
+  out += ";\nvar GX=[" + keyed_excluded + "];\n";
   out += kInjectTail;
   return out;
 }

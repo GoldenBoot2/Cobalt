@@ -6,6 +6,8 @@
 #ifndef COBALT_NETWORK_ADGUARD_FILTER_H_
 #define COBALT_NETWORK_ADGUARD_FILTER_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "url/gurl.h"
@@ -26,6 +28,9 @@ bool ShouldBlockResource(const GURL& url, const GURL& page, int csp_type);
 // WebModule: JavaScript that applies the cosmetic rules (element hiding,
 // ExtendedCss, CSS) and scriptlets for |page|, or "" if none.
 std::string PageScript(const GURL& page);
+
+// Logs how long the page script took to run (WebModule).
+void LogPageScriptRun(const GURL& page, int64_t ms);
 
 }  // namespace adguard
 }  // namespace network

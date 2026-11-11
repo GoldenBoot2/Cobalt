@@ -58,10 +58,18 @@ bool EngineShouldBlock(const Request& r, uint32_t page_flags, std::string* why);
 uint32_t EnginePageFlags(const std::string& page_url, const std::string& page_host,
                          size_t registry_len);
 
+// Test switches (Android property debug.gb.adguard, read by adguard_filter.cc).
+enum Mode : uint32_t {
+  kModeNoGenericCosmetic = 1,  // no generic element hiding
+  kModeNoPageScript = 2,       // no cosmetic rules or scriptlets at all
+  kModeNoNetwork = 4,          // no request blocking
+  kModeGenericAsCss = 8,       // all generic hiding as one style sheet (old way)
+};
+
 // JavaScript that applies this page's cosmetic rules and scriptlets, or "" if
 // there is nothing to apply.
 std::string EnginePageScript(const std::string& host, size_t registry_len,
-                             uint32_t page_flags);
+                             uint32_t page_flags, uint32_t mode);
 
 // One-line description of the compiled lists, for the log.
 std::string EngineInfo();

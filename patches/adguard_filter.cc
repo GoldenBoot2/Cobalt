@@ -4,6 +4,7 @@
 #include "cobalt/network/adguard_filter.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #include <mutex>
 #include <string>
@@ -13,6 +14,7 @@
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#include <sys/system_properties.h>
 #endif
 
 namespace cobalt {
@@ -41,6 +43,16 @@ void InitOnce() {
     std::string info = EngineInfo();
     GB_LOG("%s", info.c_str());
   });
+}
+
+// Test switches: adb shell setprop debug.gb.adguard <Mode bits> (0 = all on).
+uint32_t Mode() {
+#if defined(__ANDROID__)
+  char v[PROP_VALUE_MAX] = {0};
+  if (__system_property_get("debug.gb.adguard", v) > 0)
+    return static_cast<uint32_t>(strtoul(v, nullptr, 0));
+#endif
+  return 0;
 }
 
 size_t RegistryLength(const std::string& host) {
@@ -91,6 +103,7 @@ uint32_t TypeFromCsp(int csp_type) {
 
 bool Decide(const GURL& url, const GURL& page, uint32_t type) {
   if (!url.SchemeIsHTTPOrHTTPS() && !url.SchemeIsWSOrWSS()) return false;
+  if (Mode() & kModeNoNetwork) return false;
   InitOnce();
   Request r;
   r.url = url.spec();
@@ -127,9 +140,20 @@ std::string PageScript(const GURL& page) {
   const std::string host = page.host();
   if (host.empty()) return std::string();
   InitOnce();
-  std::string script = EnginePageScript(host, RegistryLength(host), PageFlags(page));
-  GB_LOG("page script for %s: %zu bytes", host.c_str(), script.size());
+  const uint32_t mode = Mode();
+  if (mode & kModeNoPageScript) {
+    GB_LOG("page script for %s: off (mode %u)", host.c_str(), mode);
+    return std::string();
+  }
+  std::string script =
+      EnginePageScript(host, RegistryLength(host), PageFlags(page), mode);
+  GB_LOG("page script for %s: %zu bytes (mode %u)", host.c_str(), script.size(), mode);
   return script;
+}
+
+void LogPageScriptRun(const GURL& page, int64_t ms) {
+  GB_LOG("page script for %s ran in %lld ms", page.host().c_str(),
+         static_cast<long long>(ms));
 }
 
 }  // namespace adguard

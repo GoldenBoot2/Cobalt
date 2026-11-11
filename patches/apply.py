@@ -88,11 +88,40 @@ edit('cobalt/browser/web_module.cc',
      '        ::cobalt::network::adguard::PageScript(data.initial_url);\n'
      '    if (!adguard_script.empty()) {\n'
      '      bool adguard_ok = false;\n'
+     '      const base::TimeTicks adguard_start = base::TimeTicks::Now();\n'
      '      web_context_->script_runner()->Execute(\n'
      '          adguard_script, base::SourceLocation("[GoldenBoot AdGuard]", 1, 1),\n'
      '          true /*mute_errors*/, &adguard_ok);\n'
+     '      ::cobalt::network::adguard::LogPageScriptRun(\n'
+     '          data.initial_url,\n'
+     '          (base::TimeTicks::Now() - adguard_start).InMilliseconds());\n'
      '    }\n'
      '  }\n')
+
+# 3b. CSS that Cobalt cannot parse (custom properties, clamp/min/max, inset) is rewritten
+# before parsing: css_compat.{h,cc} in cobalt/css_parser.
+cp = os.path.join(SRC, 'cobalt', 'css_parser')
+for f in ('css_compat.h', 'css_compat.cc'):
+    shutil.copyfile(os.path.join(HERE, f), os.path.join(cp, f))
+    print('copied', f)
+edit('cobalt/css_parser/BUILD.gn',
+     '    "grammar.h",\n',
+     '    "css_compat.cc",\n    "css_compat.h",\n    "grammar.h",\n')
+edit('cobalt/css_parser/parser.cc',
+     '#include "cobalt/css_parser/parser.h"\n',
+     '#include "cobalt/css_parser/parser.h"\n\n#include "cobalt/css_parser/css_compat.h"\n')
+edit('cobalt/css_parser/parser.cc',
+     '  ParserImpl parser_impl(input, input_location, this, on_warning_callback_,\n',
+     '  std::string gb_storage;  // GoldenBoot: CSS compatibility rewrites\n'
+     '  const std::string& gb_input = css_compat::Process(input, &gb_storage);\n'
+     '  ParserImpl parser_impl(gb_input, input_location, this, on_warning_callback_,\n',
+     count=4)
+edit('cobalt/css_parser/parser.cc',
+     '  ParserImpl parser_impl(property_value, property_location, this,\n',
+     '  std::string gb_storage;  // GoldenBoot: CSS compatibility rewrites\n'
+     '  const std::string& gb_value = css_compat::Process(property_value, &gb_storage);\n'
+     '  ParserImpl parser_impl(gb_value, property_location, this,\n',
+     count=2)
 
 # 2. Lower memory limits
 ARGS = [

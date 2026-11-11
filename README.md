@@ -41,6 +41,18 @@ The run builds the official source with Cobalt's own Docker setup and uploads
 
   AdGuard Scriptlets and ExtendedCss (GPL-3.0, by AdGuard) are downloaded from npm at build
   time, pinned by version and checksum.
+
+  Generic element hiding is applied on demand: selectors keyed by a class or id are sent to
+  the page as a lookup table and added only when that class/id appears (like uBlock Origin),
+  instead of one 550 KB style sheet on every page. ExtendedCss is loaded only on sites with
+  extended rules of their own.
+
+  Test switches (no rebuild): `adb shell setprop debug.gb.adguard <bits>` - 1 no generic
+  hiding, 2 no page script, 4 no request blocking, 8 all generic hiding as one style sheet.
+  0 or unset = everything on.
+- **CSS compatibility (`css_compat.cc`):** before Cobalt parses CSS, `var(--x)` custom
+  properties are resolved from the page's own definitions, `clamp()`/`min()`/`max()` are
+  reduced to one value and `inset:` is expanded, so modern sites keep their colours and layout.
 - **Lower memory limits** for 512 MB TVs: smaller image, Skia, font and glyph-atlas caches,
   a 16 MB video buffer budget and 30 s of played media kept in memory.
 - **Content-Security-Policy header optional:** release builds otherwise refuse a start page that
