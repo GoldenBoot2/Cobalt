@@ -641,6 +641,7 @@ const char kYtTv[] =
     "if(MS&&MS.isTypeSupported){var its=MS.isTypeSupported;\n"
     "MS.isTypeSupported=function(t){var s=String(t),h=s.match(/height=(\\d+)/);\n"
     "if(h&&+h[1]>cap){if(nc++<3)gbr('yt cap '+s.slice(0,100));return false;}\n"
+    "if((m&8192)&&/vp0?9|av01/i.test(s)){if(nc++<6)gbr('yt no vp9 '+s.slice(0,100));return false;}\n"
     "return its.apply(MS,arguments);};}else gbr('yt cap: no MediaSource.isTypeSupported');}\n"
     "catch(e){gbr('yt cap err '+gbs(e));}}\n"
     "if(m&64){gbr('yt off');return;}\n"

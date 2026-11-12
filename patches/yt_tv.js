@@ -7,7 +7,7 @@
 // Test bits: 16 delete the keys instead of emptying, 32 re-serialise unchanged,
 // 128 original text in a new Response (fetch only), 64 handler off, 256 diagnostics
 // (every answer parsed + streaming/SSAP/leftover report), 2048 no no-ad request flag,
-// 4096 no 720p resolution cap.
+// 4096 no 720p resolution cap, 8192 H.264 only (no VP9/AV1).
 try{(function(){
 var m=(typeof gbmode==='number'?gbmode:0);
 // Bit 512: trace every fetch / XHR / Worker the page starts (where do answers come from?).
@@ -25,6 +25,8 @@ if(!(m&4096)){try{var MS=window.MediaSource,cap=720,nc=0;
 if(MS&&MS.isTypeSupported){var its=MS.isTypeSupported;
 MS.isTypeSupported=function(t){var s=String(t),h=s.match(/height=(\d+)/);
 if(h&&+h[1]>cap){if(nc++<3)gbr('yt cap '+s.slice(0,100));return false;}
+// Bit 8192: H.264 only (no VP9 / AV1), to compare the TV's decoders.
+if((m&8192)&&/vp0?9|av01/i.test(s)){if(nc++<6)gbr('yt no vp9 '+s.slice(0,100));return false;}
 return its.apply(MS,arguments);};}else gbr('yt cap: no MediaSource.isTypeSupported');}
 catch(e){gbr('yt cap err '+gbs(e));}}
 if(m&64){gbr('yt off');return;}
