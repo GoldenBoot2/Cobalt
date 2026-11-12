@@ -72,6 +72,7 @@ enum Mode : uint32_t {
   kModeAdProbes = 256,         // RAW/FINAL answer reports, env check, verbose scriptlets
   kModeTraceYt = 512,          // log every youtube.com /youtubei/ request (network level) and
                                // every fetch/XHR/Worker the page starts (page script)
+  kModeYtNoSabr = 1024,        // drop streamingData.serverAbrStreamingUrl (classic formats)
 };
 
 // JavaScript that applies this page's cosmetic rules and scriptlets, or "" if

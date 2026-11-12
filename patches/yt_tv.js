@@ -26,9 +26,20 @@ else fix(e,d+1,f);}return;}
 for(var k in o){var v=o[k];if(ads.indexOf(k)>=0){
 if(v&&v.length)f.push(k+':'+v.length);if(m&16)delete o[k];else o[k]=[];}
 else if(v&&typeof v==='object')fix(v,d+1,f);}}
+// Streaming details of player answers (SABR = videoplayback POST stream, which can carry
+// server-inserted ads). Bit 1024 drops the SABR URL so the player uses the classic formats.
+function sabr(j,f,d){if(!j||typeof j!=='object'||d>3)return;
+if(Array.isArray(j)){for(var i=0;i<j.length;i++)sabr(j[i],f,d+1);return;}
+var sd=j.streamingData;if(sd&&typeof sd==='object'){
+var af=sd.adaptiveFormats||[],a0=af[0]||{};
+f.push('SD:'+Object.keys(sd).join('/')+' fmt='+af.length+(a0.url?' url':'')+(a0.signatureCipher?' cipher':''));
+if((m&1024)&&sd.serverAbrStreamingUrl){delete sd.serverAbrStreamingUrl;f.push('SABR-DROPPED');}}
+if(j.playerResponse)sabr(j.playerResponse,f,d+1);}
 // Cleans parsed answer j (in place); returns the text to hand to the page.
-function proc(j,s,via,inLen){var f=[];if(!(m&(32|128)))fix(j,0,f);
+function proc(j,s,via,inLen){var f=[];if(!(m&(32|128)))fix(j,0,f);sabr(j,f,0);
 var o=JSON.stringify(j);
+var sp=o.match(/"[^"]*(?:ssap|Ssap|SSAP|serverStitched|ServerStitched)[^"]*"/g);
+if(sp){var su={};sp.forEach(function(x){su[x.slice(0,40)]=1;});f.push('SSAP:'+Object.keys(su).slice(0,6).join(','));}
 var ak={};(o.match(/"(?:ad|\w+Ad)\w*Renderer"/g)||[]).forEach(function(x){ak[x]=1;});
 ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);
 if(n++<3||(f.length&&nf++<40)){var ks=[];if(!Array.isArray(j))for(var k in j)
