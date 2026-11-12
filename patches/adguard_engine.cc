@@ -631,10 +631,14 @@ const char kYtTv[] =
     "if(m&64){gbr('yt off');return;}var of=window.fetch;if(!of)return;"
     // Ad lists are emptied at ANY depth: get_watch answers are an array holding the player
     // response, and signed-in answers nest it differently (ads were still shown that way).
-    "var re=/youtubei\\/v1\\/(player|get_watch|next)/,n=0,nf=0,"
+    // Feed ads ("Sponsored" cards on home/search/up next) are list items holding an
+    // adSlotRenderer: such items are taken out of every list.
+    "var re=/youtubei\\/v1\\/(player|get_watch|next|browse|search)/,n=0,nf=0,"
     "ads=['adPlacements','adSlots','playerAds'];"
-    "function fix(o,d,f){if(!o||typeof o!=='object'||d>12)return;"
-    "if(Array.isArray(o)){for(var i=0;i<o.length;i++)fix(o[i],d+1,f);return;}"
+    "function fix(o,d,f){if(!o||typeof o!=='object'||d>24)return;"
+    "if(Array.isArray(o)){for(var i=o.length-1;i>=0;i--){var e=o[i];"
+    "if(e&&typeof e==='object'&&e.adSlotRenderer){o.splice(i,1);f.push('adSlotRenderer');}"
+    "else fix(e,d+1,f);}return;}"
     "for(var k in o){var v=o[k];if(ads.indexOf(k)>=0){"
     "if(v&&v.length)f.push(k+':'+v.length);if(m&16)delete o[k];else o[k]=[];}"
     "else if(v&&typeof v==='object')fix(v,d+1,f);}}\n"
@@ -644,6 +648,8 @@ const char kYtTv[] =
     "gbr('yt not json '+gbs(e));return r;}var f=[];"
     "if(!(m&(32|128)))fix(j,0,f);"
     "var o=(m&128)?t:JSON.stringify(j);"
+    "var ak={};(o.match(/\"(?:ad|\\w+Ad)\\w*Renderer\"/g)||[]).forEach(function(x){ak[x]=1;});"
+    "ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);"
     "if(n++<3||(f.length&&nf++<40)){var ks=[];if(!Array.isArray(j))for(var k in j)"
     "ks.push(k+':'+JSON.stringify(j[k]).length);"
     "gbr('yt mode='+m+' '+(s.match(re)||[''])[1]+(Array.isArray(j)?' array'+j.length:'')"
