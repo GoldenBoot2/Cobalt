@@ -8,6 +8,14 @@
 // 128 original text in a new Response (fetch only), 64 handler off.
 try{(function(){
 var m=(typeof gbmode==='number'?gbmode:0);
+// Bit 512: trace every fetch / XHR / Worker the page starts (where do answers come from?).
+if(m&512){try{var tn=0;function tr(w,u){if(tn++<120)gbr('trace '+w+' '+String(u).slice(0,170));}
+var tf=window.fetch;if(tf)window.fetch=function(u){tr('fetch',u&&u.url||u);return tf.apply(this,arguments);};
+var TX=window.XMLHttpRequest;if(TX&&TX.prototype){var to=TX.prototype.open;
+TX.prototype.open=function(mt,u){if(String(u).indexOf('gb-debug.invalid')<0)tr('xhr '+mt,u);return to.apply(this,arguments);};}
+var TW=window.Worker;if(TW)window.Worker=function(u,o){tr('worker',u);return new TW(u,o);};
+tr('env','sw='+!!(navigator.serviceWorker)+' ctl='+!!(navigator.serviceWorker&&navigator.serviceWorker.controller)
++' worker='+!!TW+' sab='+(typeof SharedArrayBuffer));}catch(e){gbr('trace err '+gbs(e));}}
 if(m&64){gbr('yt off');return;}
 var re=/youtubei\/v1\/(player|get_watch|next|browse|search)/,n=0,nf=0,
 ads=['adPlacements','adSlots','playerAds'];

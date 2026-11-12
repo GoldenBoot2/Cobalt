@@ -70,6 +70,8 @@ enum Mode : uint32_t {
   kModeYtOff = 64,             // handler off (ads play)
   kModeYtOriginalText = 128,   // original text in a new Response
   kModeAdProbes = 256,         // RAW/FINAL answer reports, env check, verbose scriptlets
+  kModeTraceYt = 512,          // log every youtube.com /youtubei/ request (network level) and
+                               // every fetch/XHR/Worker the page starts (page script)
 };
 
 // JavaScript that applies this page's cosmetic rules and scriptlets, or "" if

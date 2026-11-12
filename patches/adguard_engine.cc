@@ -630,6 +630,13 @@ const char kAdProbes[] =
 const char kYtTv[] =
     "try{(function(){\n"
     "var m=(typeof gbmode==='number'?gbmode:0);\n"
+    "if(m&512){try{var tn=0;function tr(w,u){if(tn++<120)gbr('trace '+w+' '+String(u).slice(0,170));}\n"
+    "var tf=window.fetch;if(tf)window.fetch=function(u){tr('fetch',u&&u.url||u);return tf.apply(this,arguments);};\n"
+    "var TX=window.XMLHttpRequest;if(TX&&TX.prototype){var to=TX.prototype.open;\n"
+    "TX.prototype.open=function(mt,u){if(String(u).indexOf('gb-debug.invalid')<0)tr('xhr '+mt,u);return to.apply(this,arguments);};}\n"
+    "var TW=window.Worker;if(TW)window.Worker=function(u,o){tr('worker',u);return new TW(u,o);};\n"
+    "tr('env','sw='+!!(navigator.serviceWorker)+' ctl='+!!(navigator.serviceWorker&&navigator.serviceWorker.controller)\n"
+    "+' worker='+!!TW+' sab='+(typeof SharedArrayBuffer));}catch(e){gbr('trace err '+gbs(e));}}\n"
     "if(m&64){gbr('yt off');return;}\n"
     "var re=/youtubei\\/v1\\/(player|get_watch|next|browse|search)/,n=0,nf=0,\n"
     "ads=['adPlacements','adSlots','playerAds'];\n"

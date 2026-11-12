@@ -109,7 +109,12 @@ bool Decide(const GURL& url, const GURL& page, uint32_t type) {
     GB_LOG("js %s: %s", page.host().c_str(), q.c_str());
     return true;
   }
-  if (ReadMode() & kModeNoNetwork) return false;
+  const uint32_t mode = ReadMode();
+  if ((mode & kModeTraceYt) && url.path().find("/youtubei/") != std::string::npos) {
+    std::string shown = url.spec().size() > 200 ? url.spec().substr(0, 200) : url.spec();
+    GB_LOG("trace net type=%u page=%s %s", type, page.host().c_str(), shown.c_str());
+  }
+  if (mode & kModeNoNetwork) return false;
   InitOnce();
   Request r;
   r.url = url.spec();
