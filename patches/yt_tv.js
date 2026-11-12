@@ -5,7 +5,9 @@
 // "Sponsored" feed cards (list items holding an adSlotRenderer), in answers to
 // /youtubei/v1/(player|get_watch|next|browse|search) loaded with fetch() OR XMLHttpRequest.
 // Test bits: 16 delete the keys instead of emptying, 32 re-serialise unchanged,
-// 128 original text in a new Response (fetch only), 64 handler off.
+// 128 original text in a new Response (fetch only), 64 handler off, 256 diagnostics
+// (every answer parsed + streaming/SSAP/leftover report), 2048 no no-ad request flag,
+// 4096 no 720p resolution cap.
 try{(function(){
 var m=(typeof gbmode==='number'?gbmode:0);
 // Bit 512: trace every fetch / XHR / Worker the page starts (where do answers come from?).
@@ -16,6 +18,15 @@ TX.prototype.open=function(mt,u){if(String(u).indexOf('gb-debug.invalid')<0)tr('
 var TW=window.Worker;if(TW)window.Worker=function(u,o){tr('worker',u);return new TW(u,o);};
 tr('env','sw='+!!(navigator.serviceWorker)+' ctl='+!!(navigator.serviceWorker&&navigator.serviceWorker.controller)
 +' worker='+!!TW+' sab='+(typeof SharedArrayBuffer));}catch(e){gbr('trace err '+gbs(e));}}
+// Resolution cap: the TV panel is 1280x720, but YouTube picked VP9 1080p (itag 248); the
+// decoder then works on 1080p frames that are scaled down (shimmer, more CPU/RAM). Formats
+// taller than 720 are reported unsupported, so YouTube picks 720p. Bit 4096 turns it off.
+if(!(m&4096)){try{var MS=window.MediaSource,cap=720,nc=0;
+if(MS&&MS.isTypeSupported){var its=MS.isTypeSupported;
+MS.isTypeSupported=function(t){var s=String(t),h=s.match(/height=(\d+)/);
+if(h&&+h[1]>cap){if(nc++<3)gbr('yt cap '+s.slice(0,100));return false;}
+return its.apply(MS,arguments);};}else gbr('yt cap: no MediaSource.isTypeSupported');}
+catch(e){gbr('yt cap err '+gbs(e));}}
 if(m&64){gbr('yt off');return;}
 var re=/youtubei\/v1\/(player|get_watch|next|browse|search)/,n=0,nf=0,
 ads=['adPlacements','adSlots','playerAds'];
@@ -63,28 +74,38 @@ var af=sd.adaptiveFormats||[],a0=af[0]||{};
 f.push('SD:'+Object.keys(sd).join('/')+' fmt='+af.length+(a0.url?' url':'')+(a0.signatureCipher?' cipher':''));
 if((m&1024)&&sd.serverAbrStreamingUrl){delete sd.serverAbrStreamingUrl;f.push('SABR-DROPPED');}}
 if(j.playerResponse)sabr(j.playerResponse,f,d+1);}
-// Cleans parsed answer j (in place); returns the text to hand to the page.
-function proc(j,s,via,inLen){var f=[];if(!(m&(32|128)))fix(j,0,f);sabr(j,f,0);
-var o=JS(j);
-var sp=o.match(/"[^"]*(?:ssap|Ssap|SSAP|serverStitched|ServerStitched)[^"]*"/g);
+// Quick test on the raw text: does the answer hold a non-empty ad list or a Sponsored card?
+// Answers without one are handed on untouched (no parse / re-serialise on the TV's slow CPU).
+var adre=/"(?:adPlacements|adSlots|playerAds)":\s*\[\s*[^\]\s]|"adSlotRenderer"/;
+function hasAds(t){return adre.test(t);}
+var fast=!(m&(32|128|256));
+// Cleans parsed answer j (in place); returns the text to hand to the page (null = j is
+// an object answer, already cleaned in place). Diagnostics only with bit 256.
+function proc(j,s,via,inLen,txt){var f=[];if(!(m&(32|128)))fix(j,0,f);var dbg=m&256;
+if(dbg)sabr(j,f,0);
+var o=(txt||dbg)?JS(j):null;
+if(dbg){var sp=o.match(/"[^"]*(?:ssap|Ssap|SSAP|serverStitched|ServerStitched)[^"]*"/g);
 if(sp){var su={};sp.forEach(function(x){su[x.slice(0,40)]=1;});f.push('SSAP:'+Object.keys(su).slice(0,6).join(','));}
 var ak={};(o.match(/"(?:ad|\w+Ad)\w*Renderer"/g)||[]).forEach(function(x){ak[x]=1;});
-ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);
-if(n++<3||(f.length&&nf++<40)){var ks=[];if(!Array.isArray(j))for(var k in j)
+ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);}
+if(n++<3||(f.length&&nf++<40)){var ks=[];if(dbg&&!Array.isArray(j))for(var k in j)
 ks.push(k+':'+JS(j[k]).length);
 gbr('yt mode='+m+' '+via+' '+(s.match(re)||[''])[1]+(Array.isArray(j)?' array'+j.length:'')
-+' in='+inLen+' out='+o.length+' removed='+(f.join(',')||'none')+' play='
++' in='+inLen+' out='+(o?o.length:-1)+' removed='+(f.join(',')||'none')+' play='
 +(j.playabilityStatus&&j.playabilityStatus.status)+' '+ks.join(' ').slice(0,240));}
 return o;}
+// Counts answers passed on untouched (first 3 reported, so the log shows the fast path).
+var nskip=0;function skip(s,via,len){if(nskip++<3)gbr('yt mode='+m+' '+via+' '+(s.match(re)||[''])[1]+' in='+len+' no ads, untouched');}
 var of=window.fetch;
 if(of)window.fetch=function(u,opt){var s=String(u&&u.url||u);
 if(opt&&typeof opt.body==='string'&&rq.test(s)){var nb=noad(opt.body,s,'fetch');if(nb!==opt.body){
 var o2={};for(var k in opt)o2[k]=opt[k];o2.body=nb;arguments[1]=o2;}}
 var p=of.apply(this,arguments);
 if(!re.test(s))return p;return p.then(function(r){if(!r||!r.ok||!r.clone)return r;
-return r.clone().text().then(function(t){var j;try{j=JP(t);}catch(e){
+return r.clone().text().then(function(t){if(fast&&!hasAds(t)){skip(s,'fetch',t.length);return r;}
+var j;try{j=JP(t);}catch(e){
 gbr('yt not json '+gbs(e));return r;}
-var o=proc(j,s,'fetch',t.length);if(m&128)o=t;
+var o=proc(j,s,'fetch',t.length,1);if(m&128)o=t;
 var h={};try{r.headers.forEach(function(v,k){h[k]=v;});}catch(e){}
 return new Response(o,{status:r.status,statusText:r.statusText,headers:h});},
 function(e){gbr('yt text failed '+gbs(e));return r;});});};
@@ -102,8 +123,10 @@ Object.defineProperty(P,name,{configurable:true,enumerable:d.enumerable,get:func
 var v=d.get.call(this);var s=this.__gbu;
 if(!s||this.readyState!==4||!re.test(s)||v===null||v===undefined||v==='')return v;
 var c='__gbc_'+name;if(this[c]!==undefined)return this[c];
-try{var obj=typeof v==='object',j=obj?v:JP(String(v));
-var o=proc(j,s,'xhr',obj?-1:String(v).length);this[c]=obj?j:((m&128)?v:o);}
+try{var obj=typeof v==='object';
+if(!obj&&fast&&!hasAds(String(v))){skip(s,'xhr',String(v).length);this[c]=v;return v;}
+var j=obj?v:JP(String(v));
+var o=proc(j,s,'xhr',obj?-1:String(v).length,!obj);this[c]=obj?j:((m&128)?v:o);}
 catch(e){gbr('yt xhr '+name+' '+gbs(e));this[c]=v;}
 return this[c];}});}
 hook('responseText');hook('response');
