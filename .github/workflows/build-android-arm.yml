@@ -121,6 +121,7 @@ jobs:
             -e SCCACHE_DIR=/root/ccache/sccache \
             -e SCCACHE_CACHE_SIZE=6G \
             -e PYTHONHASHSEED=0 \
+            -e SCCACHE_ERROR_LOG=/root/ccache/sccache-server.log \
             -e GRADLE_USER_HOME=/root/ccache/gradle \
             android-arm
           sudo chown -R "$(id -u):$(id -g)" "$CCACHE_DIR"
@@ -136,7 +137,8 @@ jobs:
         run: |
           mkdir -p ccache
           sudo chown -R "$(id -u):$(id -g)" ccache
-          rm -f ccache/sccache-server.log
+          # sccache server errors (only errors, no debug log): show them, keep them out of the cache.
+          if [ -f ccache/sccache-server.log ]; then tail -n 40 ccache/sccache-server.log; rm -f ccache/sccache-server.log; fi
           # Gradle's own daemon/lock files must not be cached.
           rm -rf ccache/gradle/daemon ccache/gradle/caches/*/*.lock ccache/gradle/native || true
           du -sh ccache ccache/* || true
