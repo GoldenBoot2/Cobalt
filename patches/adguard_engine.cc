@@ -622,43 +622,58 @@ const char kAdProbes[] =
     "if(/json-prune|set-constant|replace-|adPlacements|adSlots|playerAds|AdGuard|scriptlet/i.test(t))"
     "gbr('log: '+t.slice(0,300));if(gcl)return gcl.apply(console,arguments);};}catch(e){}\n";
 
-// YouTube TV video-info answers (/youtubei/v1/player, a plain fetch the lists' rules
-// miss). Test switch bits (debug.gb.adguard): none = ad lists set to [], 16 = keys
-// deleted, 32 = re-serialised unchanged, 128 = original text in a new Response,
-// 64 = off. Reports sizes of the top-level parts of the first answers.
+// YouTube TV ad handler: GENERATED from patches/yt_tv.js by patches/embed_js.py (edit
+// the .js, then run the script). Cleans /youtubei/v1/(player|get_watch|next|browse|search)
+// answers loaded with fetch() or XMLHttpRequest: ad lists emptied at any depth, Sponsored
+// feed cards removed. Test bits (debug.gb.adguard): 16 delete keys, 32 re-serialise
+// unchanged, 128 original text, 64 off.
 const char kYtTv[] =
-    "try{(function(){var m=(typeof gbmode==='number'?gbmode:0);"
-    "if(m&64){gbr('yt off');return;}var of=window.fetch;if(!of)return;"
-    // Ad lists are emptied at ANY depth: get_watch answers are an array holding the player
-    // response, and signed-in answers nest it differently (ads were still shown that way).
-    // Feed ads ("Sponsored" cards on home/search/up next) are list items holding an
-    // adSlotRenderer: such items are taken out of every list.
-    "var re=/youtubei\\/v1\\/(player|get_watch|next|browse|search)/,n=0,nf=0,"
-    "ads=['adPlacements','adSlots','playerAds'];"
-    "function fix(o,d,f){if(!o||typeof o!=='object'||d>24)return;"
-    "if(Array.isArray(o)){for(var i=o.length-1;i>=0;i--){var e=o[i];"
-    "if(e&&typeof e==='object'&&e.adSlotRenderer){o.splice(i,1);f.push('adSlotRenderer');}"
-    "else fix(e,d+1,f);}return;}"
-    "for(var k in o){var v=o[k];if(ads.indexOf(k)>=0){"
-    "if(v&&v.length)f.push(k+':'+v.length);if(m&16)delete o[k];else o[k]=[];}"
+    "try{(function(){\n"
+    "var m=(typeof gbmode==='number'?gbmode:0);\n"
+    "if(m&64){gbr('yt off');return;}\n"
+    "var re=/youtubei\\/v1\\/(player|get_watch|next|browse|search)/,n=0,nf=0,\n"
+    "ads=['adPlacements','adSlots','playerAds'];\n"
+    "function fix(o,d,f){if(!o||typeof o!=='object'||d>24)return;\n"
+    "if(Array.isArray(o)){for(var i=o.length-1;i>=0;i--){var e=o[i];\n"
+    "if(e&&typeof e==='object'&&e.adSlotRenderer){o.splice(i,1);f.push('adSlotRenderer');}\n"
+    "else fix(e,d+1,f);}return;}\n"
+    "for(var k in o){var v=o[k];if(ads.indexOf(k)>=0){\n"
+    "if(v&&v.length)f.push(k+':'+v.length);if(m&16)delete o[k];else o[k]=[];}\n"
     "else if(v&&typeof v==='object')fix(v,d+1,f);}}\n"
-    "window.fetch=function(u,opt){var s=String(u&&u.url||u);var p=of.apply(this,arguments);"
-    "if(!re.test(s))return p;return p.then(function(r){if(!r||!r.ok||!r.clone)return r;"
-    "return r.clone().text().then(function(t){var j;try{j=JSON.parse(t);}catch(e){"
-    "gbr('yt not json '+gbs(e));return r;}var f=[];"
-    "if(!(m&(32|128)))fix(j,0,f);"
-    "var o=(m&128)?t:JSON.stringify(j);"
-    "var ak={};(o.match(/\"(?:ad|\\w+Ad)\\w*Renderer\"/g)||[]).forEach(function(x){ak[x]=1;});"
-    "ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);"
-    "if(n++<3||(f.length&&nf++<40)){var ks=[];if(!Array.isArray(j))for(var k in j)"
-    "ks.push(k+':'+JSON.stringify(j[k]).length);"
-    "gbr('yt mode='+m+' '+(s.match(re)||[''])[1]+(Array.isArray(j)?' array'+j.length:'')"
-    "+' in='+t.length+' out='+o.length+' removed='+(f.join(',')||'none')+' play='"
-    "+(j.playabilityStatus&&j.playabilityStatus.status)+' '+ks.join(' ').slice(0,240));}"
-    "var h={};try{r.headers.forEach(function(v,k){h[k]=v;});}catch(e){}"
-    "return new Response(o,{status:r.status,statusText:r.statusText,headers:h});},"
-    "function(e){gbr('yt text failed '+gbs(e));return r;});});};})();}"
-    "catch(e){gbr('yt err '+gbs(e));}\n";
+    "function proc(j,s,via,inLen){var f=[];if(!(m&(32|128)))fix(j,0,f);\n"
+    "var o=JSON.stringify(j);\n"
+    "var ak={};(o.match(/\"(?:ad|\\w+Ad)\\w*Renderer\"/g)||[]).forEach(function(x){ak[x]=1;});\n"
+    "ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);\n"
+    "if(n++<3||(f.length&&nf++<40)){var ks=[];if(!Array.isArray(j))for(var k in j)\n"
+    "ks.push(k+':'+JSON.stringify(j[k]).length);\n"
+    "gbr('yt mode='+m+' '+via+' '+(s.match(re)||[''])[1]+(Array.isArray(j)?' array'+j.length:'')\n"
+    "+' in='+inLen+' out='+o.length+' removed='+(f.join(',')||'none')+' play='\n"
+    "+(j.playabilityStatus&&j.playabilityStatus.status)+' '+ks.join(' ').slice(0,240));}\n"
+    "return o;}\n"
+    "var of=window.fetch;\n"
+    "if(of)window.fetch=function(u,opt){var s=String(u&&u.url||u);var p=of.apply(this,arguments);\n"
+    "if(!re.test(s))return p;return p.then(function(r){if(!r||!r.ok||!r.clone)return r;\n"
+    "return r.clone().text().then(function(t){var j;try{j=JSON.parse(t);}catch(e){\n"
+    "gbr('yt not json '+gbs(e));return r;}\n"
+    "var o=proc(j,s,'fetch',t.length);if(m&128)o=t;\n"
+    "var h={};try{r.headers.forEach(function(v,k){h[k]=v;});}catch(e){}\n"
+    "return new Response(o,{status:r.status,statusText:r.statusText,headers:h});},\n"
+    "function(e){gbr('yt text failed '+gbs(e));return r;});});};\n"
+    "var X=window.XMLHttpRequest,P=X&&X.prototype;if(!P)return;\n"
+    "var oo=P.open;\n"
+    "P.open=function(mt,u){try{this.__gbu=String(u);}catch(e){}return oo.apply(this,arguments);};\n"
+    "function hook(name){var d=Object.getOwnPropertyDescriptor(P,name);\n"
+    "if(!d||!d.get){gbr('yt xhr no getter '+name);return;}\n"
+    "Object.defineProperty(P,name,{configurable:true,enumerable:d.enumerable,get:function(){\n"
+    "var v=d.get.call(this);var s=this.__gbu;\n"
+    "if(!s||this.readyState!==4||!re.test(s)||v===null||v===undefined||v==='')return v;\n"
+    "var c='__gbc_'+name;if(this[c]!==undefined)return this[c];\n"
+    "try{var obj=typeof v==='object',j=obj?v:JSON.parse(String(v));\n"
+    "var o=proc(j,s,'xhr',obj?-1:String(v).length);this[c]=obj?j:((m&128)?v:o);}\n"
+    "catch(e){gbr('yt xhr '+name+' '+gbs(e));this[c]=v;}\n"
+    "return this[c];}});}\n"
+    "hook('responseText');hook('response');\n"
+    "})();}catch(e){gbr('yt err '+gbs(e));}\n";
 
 // Applies css/ext once the document exists, and the generic lookup table G
 // ("key\tselector" lines) to elements as they appear or change class/id.
