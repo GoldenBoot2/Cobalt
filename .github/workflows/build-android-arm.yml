@@ -121,8 +121,6 @@ jobs:
             -e SCCACHE_DIR=/root/ccache/sccache \
             -e SCCACHE_CACHE_SIZE=6G \
             -e PYTHONHASHSEED=0 \
-            -e SCCACHE_LOG=debug \
-            -e SCCACHE_ERROR_LOG=/root/ccache/sccache-server.log \
             -e GRADLE_USER_HOME=/root/ccache/gradle \
             android-arm
           sudo chown -R "$(id -u):$(id -g)" "$CCACHE_DIR"
@@ -138,8 +136,7 @@ jobs:
         run: |
           mkdir -p ccache
           sudo chown -R "$(id -u):$(id -g)" ccache
-          # The sccache server log is for this run only: keep it out of the saved cache.
-          if [ -f ccache/sccache-server.log ]; then mv ccache/sccache-server.log sccache-server.log; fi
+          rm -f ccache/sccache-server.log
           # Gradle's own daemon/lock files must not be cached.
           rm -rf ccache/gradle/daemon ccache/gradle/caches/*/*.lock ccache/gradle/native || true
           du -sh ccache ccache/* || true
@@ -151,53 +148,6 @@ jobs:
         with:
           path: ccache
           key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
-
-      # Build-speed check: the generated V8 binding files miss the compiler cache in every
-      # build. Record every input of a few of them (checksums) and their compile commands,
-      # so two runs can be compared to find what changes between builds.
-      - name: Fingerprint generated binding inputs
-        if: success()
-        continue-on-error: true
-        run: |
-          pip install --quiet --break-system-packages ninja || pip install --quiet ninja
-          fp="$GITHUB_WORKSPACE/fp"; mkdir -p "$fp"
-          cd cobalt/out/android-arm_${{ inputs.config }}
-          for o in obj/cobalt/browser/generated_bindings_sources/v8c_storage_event.o \
-                   obj/cobalt/browser/generated_bindings_sources/v8c_abort_signal.o \
-                   obj/cobalt/browser/generated_types_sources/v8c_algorithm.o \
-                   obj/cobalt/browser/generated_types_sources/v8c_aes_ctr_params.o; do
-            n=$(basename "$o" .o)
-            ninja -t deps "$o" | tail -n +2 | awk 'NF{print $1}' | sort | while read -r f; do
-              sha256sum "$f"; done > "$fp/$n.deps.txt"
-            ninja -t commands "$o" | tail -n 1 > "$fp/$n.cmd.txt"
-            wc -l "$fp/$n.deps.txt"
-          done
-          # The generated header every binding file includes; it must be identical between builds.
-          cp gen/bindings/browser/source/v8c_gen_type_conversion.h "$fp/" || true
-          sha256sum gen/bindings/browser/source/v8c_gen_type_conversion.h || true
-          # What sccache did with each compile (hit / miss / not cacheable and why).
-          log="$GITHUB_WORKSPACE/sccache-server.log"
-          if [ -f "$log" ]; then
-            ls -la "$log"
-            grep -ciE "cache hit" "$log" | sed 's/^/hit lines: /'
-            grep -ciE "cache miss" "$log" | sed 's/^/miss lines: /'
-            grep -ciE "non-cacheable|not cacheable|cannot cache" "$log" | sed 's/^/non-cacheable lines: /'
-            grep -iE "generated_(bindings|types)_sources" "$log" | head -n 600 > "$fp/sccache-bindings.txt" || true
-            grep -iE "non-cacheable|not cacheable|cannot cache|error" "$log" | head -n 300 > "$fp/sccache-noncacheable.txt" || true
-            grep -iE "v8c_algorithm|v8c_storage_event" "$log" | head -n 200 > "$fp/sccache-samples.txt" || true
-            tail -n 200 "$log" > "$fp/sccache-tail.txt"
-          else
-            echo "no sccache server log"
-          fi
-
-      - name: Upload the fingerprints
-        if: success()
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: fingerprints-${{ github.run_id }}
-          path: fp/
-          retention-days: 7
 
       - name: Collect the APK
         run: |
