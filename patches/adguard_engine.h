@@ -73,6 +73,7 @@ enum Mode : uint32_t {
   kModeTraceYt = 512,          // log every youtube.com /youtubei/ request (network level) and
                                // every fetch/XHR/Worker the page starts (page script)
   kModeYtNoSabr = 1024,        // drop streamingData.serverAbrStreamingUrl (classic formats)
+  kModeYtNoAdFlagOff = 2048,   // do NOT set isInlinePlaybackNoAd=true in video requests
 };
 
 // JavaScript that applies this page's cosmetic rules and scriptlets, or "" if

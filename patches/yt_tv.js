@@ -19,6 +19,23 @@ tr('env','sw='+!!(navigator.serviceWorker)+' ctl='+!!(navigator.serviceWorker&&n
 if(m&64){gbr('yt off');return;}
 var re=/youtubei\/v1\/(player|get_watch|next|browse|search)/,n=0,nf=0,
 ads=['adPlacements','adSlots','playerAds'];
+var JP=JSON.parse,JS=JSON.stringify,np=0,nq=0;
+// Like TizenTube (reisxd/TizenTube mods/features/adblock.js): video requests carry
+// playbackContext.contentPlaybackContext; isInlinePlaybackNoAd=true asks the server for
+// playback WITHOUT ads, which also stops ads it would insert into the SABR stream itself.
+// Bit 2048 leaves requests unchanged (to compare).
+if(!(m&2048))JSON.stringify=function(v,r,sp){try{var c=v&&v.playbackContext&&v.playbackContext.contentPlaybackContext;
+if(c&&typeof c==='object'&&c.isInlinePlaybackNoAd!==true){var cp=JP(JS(v));
+cp.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd=true;
+if(nq++<10)gbr('yt request no-ad flag set'+(v.videoId?' '+v.videoId:''));return JS.call(this,cp,r,sp);}}catch(e){}
+return JS.apply(this,arguments);};
+// Safety net, also like TizenTube: any JSON the page parses gets its top-level ad lists
+// emptied (answers that reach the page by other ways than our fetch/XHR hooks).
+JSON.parse=function(){var r=JP.apply(this,arguments);try{if(r&&typeof r==='object'){
+var o=Array.isArray(r)?r.slice(0,4):[r],hit=0;for(var i=0;i<o.length;i++){var x=o[i];
+if(!x||typeof x!=='object')continue;var ys=[x,x.playerResponse];for(var y=0;y<2;y++){var z=ys[y];
+if(!z||typeof z!=='object')continue;for(var a=0;a<3;a++){var k=ads[a];
+if(z[k]&&z[k].length){hit++;z[k]=[];}}}}if(hit&&np++<20)gbr('yt parse removed '+hit);}}catch(e){}return r;};
 function fix(o,d,f){if(!o||typeof o!=='object'||d>24)return;
 if(Array.isArray(o)){for(var i=o.length-1;i>=0;i--){var e=o[i];
 if(e&&typeof e==='object'&&e.adSlotRenderer){o.splice(i,1);f.push('adSlotRenderer');}
@@ -37,13 +54,13 @@ if((m&1024)&&sd.serverAbrStreamingUrl){delete sd.serverAbrStreamingUrl;f.push('S
 if(j.playerResponse)sabr(j.playerResponse,f,d+1);}
 // Cleans parsed answer j (in place); returns the text to hand to the page.
 function proc(j,s,via,inLen){var f=[];if(!(m&(32|128)))fix(j,0,f);sabr(j,f,0);
-var o=JSON.stringify(j);
+var o=JS(j);
 var sp=o.match(/"[^"]*(?:ssap|Ssap|SSAP|serverStitched|ServerStitched)[^"]*"/g);
 if(sp){var su={};sp.forEach(function(x){su[x.slice(0,40)]=1;});f.push('SSAP:'+Object.keys(su).slice(0,6).join(','));}
 var ak={};(o.match(/"(?:ad|\w+Ad)\w*Renderer"/g)||[]).forEach(function(x){ak[x]=1;});
 ak=Object.keys(ak).join(',');if(ak)f.push('LEFT:'+ak);
 if(n++<3||(f.length&&nf++<40)){var ks=[];if(!Array.isArray(j))for(var k in j)
-ks.push(k+':'+JSON.stringify(j[k]).length);
+ks.push(k+':'+JS(j[k]).length);
 gbr('yt mode='+m+' '+via+' '+(s.match(re)||[''])[1]+(Array.isArray(j)?' array'+j.length:'')
 +' in='+inLen+' out='+o.length+' removed='+(f.join(',')||'none')+' play='
 +(j.playabilityStatus&&j.playabilityStatus.status)+' '+ks.join(' ').slice(0,240));}
@@ -51,7 +68,7 @@ return o;}
 var of=window.fetch;
 if(of)window.fetch=function(u,opt){var s=String(u&&u.url||u);var p=of.apply(this,arguments);
 if(!re.test(s))return p;return p.then(function(r){if(!r||!r.ok||!r.clone)return r;
-return r.clone().text().then(function(t){var j;try{j=JSON.parse(t);}catch(e){
+return r.clone().text().then(function(t){var j;try{j=JP(t);}catch(e){
 gbr('yt not json '+gbs(e));return r;}
 var o=proc(j,s,'fetch',t.length);if(m&128)o=t;
 var h={};try{r.headers.forEach(function(v,k){h[k]=v;});}catch(e){}
@@ -68,7 +85,7 @@ Object.defineProperty(P,name,{configurable:true,enumerable:d.enumerable,get:func
 var v=d.get.call(this);var s=this.__gbu;
 if(!s||this.readyState!==4||!re.test(s)||v===null||v===undefined||v==='')return v;
 var c='__gbc_'+name;if(this[c]!==undefined)return this[c];
-try{var obj=typeof v==='object',j=obj?v:JSON.parse(String(v));
+try{var obj=typeof v==='object',j=obj?v:JP(String(v));
 var o=proc(j,s,'xhr',obj?-1:String(v).length);this[c]=obj?j:((m&128)?v:o);}
 catch(e){gbr('yt xhr '+name+' '+gbs(e));this[c]=v;}
 return this[c];}});}
