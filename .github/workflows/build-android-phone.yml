@@ -1,0 +1,174 @@
+name: Build Cobalt (Android phone, arm64)
+
+# PHONE build, separate from the TV build (build-android-arm.yml is never changed for phones).
+# Manual run only: Actions tab > "Build Cobalt (Android phone, arm64)" > Run workflow.
+# 64-bit (arm64) for phones that run only 64-bit apps; adds patches/phone/apply_phone.py
+# (mobile User-Agent so YouTube serves m.youtube.com).
+# Builds the official Cobalt source with Cobalt's own Docker setup
+# (docker-compose.yml service "android-arm64", docker/linux/android/Dockerfile).
+
+on:
+  workflow_dispatch:
+    inputs:
+      cobalt_ref:
+        description: "youtube/cobalt tag or branch"
+        required: true
+        default: "25.lts.40"
+      config:
+        description: "Build type"
+        required: true
+        default: "gold"
+        type: choice
+        options: [gold, qa]
+      goldenboot:
+        description: "Apply GoldenBoot patches (AdGuard filter lists, lower memory limits)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      # No disk clean-up step: a build (with the compiler cache) uses about 40 GB of the
+      # runner's ~85 GB free, and the clean-up took 2-3 minutes.
+      - name: Check out Cobalt source
+        uses: actions/checkout@v7
+        with:
+          repository: youtube/cobalt
+          ref: ${{ inputs.cobalt_ref }}
+          fetch-depth: 1
+          path: cobalt
+
+      - name: Check out GoldenBoot patches
+        if: ${{ inputs.goldenboot }}
+        uses: actions/checkout@v7
+        with:
+          path: gb
+          fetch-depth: 1
+
+      - name: Apply GoldenBoot patches
+        if: ${{ inputs.goldenboot }}
+        # AdGuard Base (2), Tracking Protection (3) and Mobile Ads (11) lists, downloaded now,
+        # plus AdGuard Scriptlets (corelibs build) and ExtendedCss from npm (pinned, checked).
+        run: |
+          mkdir -p /tmp/adg && cd /tmp/adg
+          curl -fsSL -o sl.tgz https://registry.npmjs.org/@adguard/scriptlets/-/scriptlets-2.5.1.tgz
+          curl -fsSL -o ec.tgz https://registry.npmjs.org/@adguard/extended-css/-/extended-css-2.3.0.tgz
+          printf '%s\n' \
+            '347c98bb6557e982ab2a4427a620446727b850dd286e1f98b7b27d7afd0ba12f  sl.tgz' \
+            'af78bc7d5f501b76487c9ed9e35e5a8b8234414bf31d3dc213e666a9a7956d9d  ec.tgz' | sha256sum -c
+          mkdir sl ec && tar -xzf sl.tgz -C sl && tar -xzf ec.tgz -C ec
+          cd "$GITHUB_WORKSPACE"
+          python3 gb/patches/adguard_rules.py cobalt/cobalt/network/adguard_rules.inc \
+            --scriptlets /tmp/adg/sl/package/dist/scriptlets.corelibs.json \
+            --extcss /tmp/adg/ec/package/dist/extended-css.min.js 2 3 11
+          python3 gb/patches/apply.py cobalt
+          python3 gb/patches/phone/apply_phone.py cobalt
+          cd cobalt && git status --short && git diff --stat
+
+      - name: Build the Docker build images
+        working-directory: cobalt
+        # One at a time: each image is built FROM the previous one, and a combined
+        # "compose build" builds them in parallel and looks for them on Docker Hub.
+        # The base image normally starts FROM marketplace.gcr.io/google/debian11, which
+        # refuses anonymous pulls (403); Docker Hub's official debian:bullseye is the
+        # same Debian 11, so the base image is built from it directly.
+        # Debian 11 has reached end of life: its packages now live on archive.debian.org
+        # (deb.debian.org returns 404), so apt is pointed there first.
+        run: |
+          printf '%s\n' \
+            'FROM debian:bullseye' \
+            'RUN rm -f /etc/apt/sources.list.d/* \' \
+            ' && printf "deb http://archive.debian.org/debian bullseye main\ndeb http://archive.debian.org/debian bullseye-updates main\ndeb http://archive.debian.org/debian-security bullseye-security main\n" > /etc/apt/sources.list \' \
+            ' && echo "Acquire::Check-Valid-Until \"false\";" > /etc/apt/apt.conf.d/99archive' \
+            > /tmp/Dockerfile.bullseye-archive
+          cat /tmp/Dockerfile.bullseye-archive
+          docker build -t bullseye-archive:latest -f /tmp/Dockerfile.bullseye-archive /tmp
+          docker build --build-arg BASE_OS=bullseye-archive --build-arg BASE_OS_TAG=latest \
+            -t cobalt-base -f docker/linux/base/Dockerfile docker/linux
+          docker compose build build-base
+          docker compose build build-android
+          docker image ls
+          df -h /
+
+      # Compiler cache: Cobalt's build uses sccache when SCCACHE=1 and SCCACHE_DIR are set.
+      # The cache folder is mounted into the container as /root/ccache (docker-compose.yml
+      # CCACHE_DIR) and kept between runs with the Actions cache, so unchanged files are not
+      # compiled again. The first run fills it; later runs only compile what changed.
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ccache
+          key: sccache-android-arm64-${{ inputs.config }}-${{ github.run_id }}
+          restore-keys: sccache-android-arm64-${{ inputs.config }}-
+
+      # PYTHONHASHSEED=0: Cobalt's binding generator iterates a Python set, so without a fixed
+      # seed v8c_gen_type_conversion.h comes out in a different order every build and ~185
+      # binding files miss the compiler cache (~9 min). GRADLE_USER_HOME inside the cache
+      # folder keeps Gradle and its Maven downloads between builds (also avoids HTTP 429).
+      - name: Build Cobalt
+        working-directory: cobalt
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/ccache
+        run: |
+          mkdir -p "$CCACHE_DIR/sccache"
+          du -sh "$CCACHE_DIR" || true
+          docker compose run --rm -T \
+            -e CONFIG=${{ inputs.config }} \
+            -e NINJA_PARALLEL=4 \
+            -e TARGET=cobalt_install \
+            -e SCCACHE=1 \
+            -e SCCACHE_DIR=/root/ccache/sccache \
+            -e SCCACHE_CACHE_SIZE=6G \
+            -e PYTHONHASHSEED=0 \
+            -e SCCACHE_ERROR_LOG=/root/ccache/sccache-server.log \
+            -e GRADLE_USER_HOME=/root/ccache/gradle \
+            android-arm64
+          sudo chown -R "$(id -u):$(id -g)" "$CCACHE_DIR"
+          du -sh "$CCACHE_DIR"
+          df -h /
+
+      # The container writes the cache as root; the cache action runs as the runner user.
+      # A cancelled or early-failed run has an empty or tiny cache; saving it would make it the
+      # newest one, and the next run would restore it and compile from scratch (~70 min).
+      - name: Make the compiler cache readable
+        id: ccache_size
+        if: always()
+        run: |
+          mkdir -p ccache
+          sudo chown -R "$(id -u):$(id -g)" ccache
+          # sccache server errors (only errors, no debug log): show them, keep them out of the cache.
+          if [ -f ccache/sccache-server.log ]; then tail -n 40 ccache/sccache-server.log; rm -f ccache/sccache-server.log; fi
+          # Gradle's own daemon/lock files must not be cached.
+          rm -rf ccache/gradle/daemon ccache/gradle/caches/*/*.lock ccache/gradle/native || true
+          du -sh ccache ccache/* || true
+          echo "mb=$(du -sm ccache | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Save the compiler cache
+        if: always() && steps.ccache_size.outputs.mb >= 50
+        uses: actions/cache/save@v6
+        with:
+          path: ccache
+          key: sccache-android-arm64-${{ inputs.config }}-${{ github.run_id }}
+
+      - name: Collect the APK
+        run: |
+          mkdir -p dist
+          find cobalt/out -name "*.apk" -size +1M -print
+          apk=$(find cobalt/out -name "cobalt.apk" | head -n 1)
+          test -n "$apk"
+          cp "$apk" "dist/cobalt-${{ inputs.cobalt_ref }}-android-arm64-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}-phone.apk"
+          sha256sum dist/*.apk
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: cobalt-${{ inputs.cobalt_ref }}-android-arm64-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}-phone
+          path: dist/*.apk
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error

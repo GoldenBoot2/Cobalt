@@ -1,6 +1,7 @@
 """GitHub Actions helper for GoldenBoot2/Cobalt. Token read from ~/.claude/secrets/github-cobalt-token.txt, never printed.
 Usage:
-  python -I gh_actions.py run [ref] [config]     start the build
+  python -I gh_actions.py run [ref] [config]     start the TV build (build-android-arm.yml)
+  python -I gh_actions.py run-phone [ref] [config]  start the separate PHONE build (build-android-phone.yml)
   python -I gh_actions.py cancel <run_id>        cancel a run
   python -I gh_actions.py status                 latest runs + job steps
   python -I gh_actions.py log <job_id> [lines]   tail of a job log
@@ -11,6 +12,9 @@ import json, os, sys, urllib.request, urllib.error
 
 REPO = "GoldenBoot2/Cobalt"
 WF = "build-android-arm.yml"
+if len(sys.argv) > 1 and sys.argv[1] == "run-phone":
+    WF = "build-android-phone.yml"
+    sys.argv[1] = "run"
 TOKEN = open(os.path.join(os.path.expanduser("~"), ".claude", "secrets", "github-cobalt-token.txt")).read().strip()
 API = "https://api.github.com/repos/" + REPO
 
