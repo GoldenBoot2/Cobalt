@@ -1,4 +1,4 @@
-name: Build Cobalt (Android arm)
+name: Build Cobalt (Android arm/arm64)
 
 # Manual run only: Actions tab > "Build Cobalt (Android arm)" > Run workflow.
 # Builds the official Cobalt source with Cobalt's own Docker setup
@@ -17,6 +17,12 @@ on:
         default: "gold"
         type: choice
         options: [gold, qa]
+      platform:
+        description: "CPU: arm (32-bit, TV) or arm64 (64-bit-only phones)"
+        required: true
+        default: "arm"
+        type: choice
+        options: [arm, arm64]
       goldenboot:
         description: "Apply GoldenBoot patches (AdGuard filter lists, lower memory limits)"
         type: boolean
@@ -99,8 +105,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ccache
-          key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
-          restore-keys: sccache-android-arm-${{ inputs.config }}-
+          key: sccache-android-${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_id }}
+          restore-keys: sccache-android-${{ inputs.platform }}-${{ inputs.config }}-
 
       # PYTHONHASHSEED=0: Cobalt's binding generator iterates a Python set, so without a fixed
       # seed v8c_gen_type_conversion.h comes out in a different order every build and ~185
@@ -123,7 +129,7 @@ jobs:
             -e PYTHONHASHSEED=0 \
             -e SCCACHE_ERROR_LOG=/root/ccache/sccache-server.log \
             -e GRADLE_USER_HOME=/root/ccache/gradle \
-            android-arm
+            android-${{ inputs.platform }}
           sudo chown -R "$(id -u):$(id -g)" "$CCACHE_DIR"
           du -sh "$CCACHE_DIR"
           df -h /
@@ -149,7 +155,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ccache
-          key: sccache-android-arm-${{ inputs.config }}-${{ github.run_id }}
+          key: sccache-android-${{ inputs.platform }}-${{ inputs.config }}-${{ github.run_id }}
 
       - name: Collect the APK
         run: |
@@ -157,13 +163,13 @@ jobs:
           find cobalt/out -name "*.apk" -size +1M -print
           apk=$(find cobalt/out -name "cobalt.apk" | head -n 1)
           test -n "$apk"
-          cp "$apk" "dist/cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}.apk"
+          cp "$apk" "dist/cobalt-${{ inputs.cobalt_ref }}-android-${{ inputs.platform }}-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}.apk"
           sha256sum dist/*.apk
 
       - name: Upload the APK
         uses: actions/upload-artifact@v7
         with:
-          name: cobalt-${{ inputs.cobalt_ref }}-android-arm-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}
+          name: cobalt-${{ inputs.cobalt_ref }}-android-${{ inputs.platform }}-${{ inputs.config }}${{ inputs.goldenboot && '-gb' || '' }}
           path: dist/*.apk
           retention-days: 30
           compression-level: 0
