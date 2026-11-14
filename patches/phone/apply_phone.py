@@ -28,6 +28,23 @@ def patch(rel, old, new):
     print("phone patch:", rel)
 
 
+
+# 2. Debug channel (phone only): YouTube's mobile script URLs are ~400 characters, which filled the whole
+#    report before line:column. Put line:column first, keep only the URL's end, shorten URLs in stacks,
+#    and keep longer reports.
+patch("cobalt/network/adguard_engine.cc",
+      "(e&&e.filename)+':'+(e&&e.lineno)+':'+(e&&e.colno)",
+      "(e&&e.lineno)+':'+(e&&e.colno)+' '+String(e&&e.filename).slice(-60)")
+patch("cobalt/network/adguard_engine.cc",
+      "String(e.stack||'').slice(0,300)",
+      "String(e.stack||'').replace(/https?:[^ )]+?(:[0-9]+:[0-9]+)/g,'$1').slice(0,500)")
+patch("cobalt/network/adguard_engine.cc",
+      "encodeURIComponent(String(m).slice(0,400))",
+      "encodeURIComponent(String(m).slice(0,700))")
+patch("cobalt/network/adguard_filter.cc",
+      "if (q.size() > 600) q.resize(600);",
+      "if (q.size() > 1500) q.resize(1500);")
+
 # Cobalt builds with -Werror,-Wunreachable-code, so no early return: CreateUserAgentString now only
 # returns the phone string, and Cobalt's own builder is kept under another name (declared first, so
 # -Wmissing-prototypes stays quiet; external linkage, so no unused-function warning).
