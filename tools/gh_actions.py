@@ -2,6 +2,7 @@
 Usage:
   python -I gh_actions.py run [ref] [config]     start the TV build (build-android-arm.yml)
   python -I gh_actions.py run-phone [ref] [config]  start the separate PHONE build (build-android-phone.yml)
+  python -I gh_actions.py run-c27 [ref] [config]    start the Cobalt 27 gold PHONE build (build-c27-phone.yml; run again until done)
   python -I gh_actions.py cancel <run_id>        cancel a run
   python -I gh_actions.py status                 latest runs + job steps
   python -I gh_actions.py log <job_id> [lines]   tail of a job log
@@ -12,8 +13,13 @@ import json, os, sys, urllib.request, urllib.error
 
 REPO = "GoldenBoot2/Cobalt"
 WF = "build-android-arm.yml"
+DEFAULT_REF = "25.lts.40"
 if len(sys.argv) > 1 and sys.argv[1] == "run-phone":
     WF = "build-android-phone.yml"
+    sys.argv[1] = "run"
+if len(sys.argv) > 1 and sys.argv[1] == "run-c27":       # Cobalt 27 gold phone build, chained runs (build-c27-phone.yml)
+    WF = "build-c27-phone.yml"
+    DEFAULT_REF = "de12c750ec0ee767d986f5c3aee7c2b1aa743795"
     sys.argv[1] = "run"
 TOKEN = open(os.path.join(os.path.expanduser("~"), ".claude", "secrets", "github-cobalt-token.txt")).read().strip()
 API = "https://api.github.com/repos/" + REPO
@@ -54,7 +60,7 @@ def call(path, data=None, raw=False):
 
 cmd = sys.argv[1]
 if cmd == "run":
-    ref = sys.argv[2] if len(sys.argv) > 2 else "25.lts.40"
+    ref = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_REF
     cfg = sys.argv[3] if len(sys.argv) > 3 else "gold"
     print(call("/actions/workflows/%s/dispatches" % WF, {"ref": "main", "inputs": {"cobalt_ref": ref, "config": cfg}}))
 elif cmd == "cancel":

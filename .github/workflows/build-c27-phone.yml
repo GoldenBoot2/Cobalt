@@ -1,0 +1,173 @@
+name: Build Cobalt 27 gold (Android phone, arm64)
+
+# PHONE build of Cobalt 27 ("Chrobalt", Chromium based) as a size-optimised release (gold =
+# is_official_build), to replace Google's CI devel APK (libchrobalt.so 137 MB) that the phone app
+# is repacked from (CobaltPhone/tools/phone27_pack.py, local). Same steps as youtube/cobalt's own
+# CI (.github/workflows/main.yaml + .github/actions/{depot_tools,build}), without Docker:
+# gclient sync with target_os android, cobalt/build/gn.py -p android-arm64 -C gold, autoninja.
+#
+# A full Chromium build does not fit in one 6 h job on a free 4-CPU runner. The build stops
+# itself in time, saves its compiler cache (sccache) and is simply started again: each run
+# gets the already compiled files from the cache and goes further, until the APK is built.
+# Manual run only: Actions tab > this workflow > Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cobalt_ref:
+        description: "youtube/cobalt commit, tag or branch (default: the 27.lts commit of the current phone APK)"
+        required: true
+        default: "de12c750ec0ee767d986f5c3aee7c2b1aa743795"
+      config:
+        description: "Build type"
+        required: true
+        default: "gold"
+        type: choice
+        options: [gold, qa, devel]
+      build_minutes:
+        description: "Minutes of compiling in this run (the rest of the 6 h is for setup and saving the cache)"
+        required: true
+        default: "250"
+
+permissions:
+  contents: read
+
+env:
+  DEPOT_TOOLS_UPDATE: 0
+  DEPOT_TOOLS_REPORT_BUILD: 0
+  DEPOT_TOOLS_COLLECT_METRICS: 0
+  DEPOT_TOOLS_METRICS: 0
+  PYTHONHASHSEED: 0
+  OUT: out/android-arm64_${{ inputs.config }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - name: Free disk space
+        # Chromium source + Android deps + build need far more than the ~85 GB a runner has free.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift /usr/local/share/powershell \
+            /usr/local/lib/node_modules /opt/microsoft /opt/google /usr/lib/jvm || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: Check out Cobalt 27 source
+        run: |
+          mkdir -p cobalt/src && cd cobalt/src
+          git init -q
+          git remote add origin https://github.com/youtube/cobalt.git
+          git fetch -q --depth 1 origin "${{ inputs.cobalt_ref }}"
+          git checkout -q FETCH_HEAD
+          git log -1 --format='%H %cd %s'
+          du -sh . ; df -h /
+
+      - name: Set up depot_tools
+        run: |
+          git clone -q --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$GITHUB_WORKSPACE/depot_tools" >> "$GITHUB_PATH"
+
+      - name: gclient sync (Android deps)
+        working-directory: cobalt
+        run: |
+          gclient config --name=src --unmanaged https://github.com/youtube/cobalt.git
+          echo "target_os=['android']" >> .gclient
+          echo "target_cpu=['x64', 'arm64']" >> .gclient
+          cat .gclient
+          gclient sync --no-history --shallow -D --nohooks --jobs 8
+          df -h /
+
+      - name: Install build dependencies
+        working-directory: cobalt/src
+        run: |
+          sudo ./build/install-build-deps.sh --android --no-prompt --no-chromeos-fonts || \
+            sudo ./build/install-build-deps.sh --android --no-prompt
+          df -h /
+
+      - name: gclient runhooks
+        working-directory: cobalt
+        run: |
+          gclient runhooks
+          df -h /
+
+      - name: Install sccache
+        run: |
+          v=0.10.0
+          curl -fsSL "https://github.com/mozilla/sccache/releases/download/v$v/sccache-v$v-x86_64-unknown-linux-musl.tar.gz" | tar -xz
+          sudo install "sccache-v$v-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
+          sccache --version
+
+      # The compiler cache carries the work from run to run. Only caches of at least 500 MB are
+      # saved (a cancelled or early-failed run must never become the newest cache).
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: sccache
+          key: sccache-c27-android-arm64-${{ inputs.config }}-${{ github.run_id }}
+          restore-keys: sccache-c27-android-arm64-${{ inputs.config }}-
+
+      - name: Generate the build (gn)
+        working-directory: cobalt/src
+        run: |
+          python3 cobalt/build/gn.py -p android-arm64 -C ${{ inputs.config }} --no-rbe --use-sccache
+          gn args --list --short --overrides-only "$OUT"
+
+      - name: Build cobalt_apk (stops in time, see build_minutes)
+        id: build
+        working-directory: cobalt/src
+        env:
+          SCCACHE_DIR: ${{ github.workspace }}/sccache
+          SCCACHE_CACHE_SIZE: 8G
+        run: |
+          mkdir -p "$SCCACHE_DIR"; du -sh "$SCCACHE_DIR"
+          sccache --start-server || true
+          left=$(ninja -C "$OUT" -n cobalt/android:cobalt_apk 2>/dev/null | grep -c '^\[' || true)
+          echo "steps to do: $left"
+          set +e
+          timeout --signal=INT "${{ inputs.build_minutes }}m" autoninja -C "$OUT" -j 6 cobalt/android:cobalt_apk
+          rc=$?
+          set -e
+          echo "ninja exit code $rc"
+          left=$(ninja -C "$OUT" -n cobalt/android:cobalt_apk 2>/dev/null | grep -c '^\[' || true)
+          echo "steps still to do: $left"
+          sccache --show-stats || true
+          sccache --stop-server || true
+          du -sh "$SCCACHE_DIR"; df -h /
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "left=$left" >> "$GITHUB_OUTPUT"
+          echo "### Cobalt 27 ${{ inputs.config }}: ninja exit $rc, steps left $left" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Measure the compiler cache
+        id: cache_size
+        if: always()
+        run: |
+          mkdir -p sccache
+          echo "mb=$(du -sm sccache | cut -f1)" >> "$GITHUB_OUTPUT"
+          du -sh sccache
+
+      - name: Save the compiler cache
+        if: always() && steps.cache_size.outputs.mb >= 500
+        uses: actions/cache/save@v6
+        with:
+          path: sccache
+          key: sccache-c27-android-arm64-${{ inputs.config }}-${{ github.run_id }}
+
+      - name: Collect the APK
+        if: steps.build.outputs.rc == '0'
+        working-directory: cobalt/src
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/apk"
+          find "$OUT" -maxdepth 3 -name '*.apk' -exec ls -la {} \;
+          find "$OUT" -maxdepth 3 -name '*.apk' -exec cp {} "$GITHUB_WORKSPACE/apk/" \;
+          ls -la "$OUT"/lib.unstripped/libchrobalt.so "$OUT"/libchrobalt.so 2>/dev/null || true
+
+      - name: Upload the APK
+        if: steps.build.outputs.rc == '0'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cobalt27-android-arm64-${{ inputs.config }}
+          path: apk/*.apk
+          if-no-files-found: error
