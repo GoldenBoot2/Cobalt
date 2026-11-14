@@ -27,3 +27,6 @@ __pycache__/
 .claude/
 tools/resign.py
 tools/local/
+
+# Phone app working folder (test APKs, screenshots, decoded files; local only)
+CobaltPhone/
