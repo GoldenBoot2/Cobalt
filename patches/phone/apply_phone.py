@@ -157,6 +157,110 @@ patch("cobalt/network/adguard_filter.cc",
       "  }\r\n"
       "  if (mode & kModeNoNetwork) return false;")
 
+# 6. YouTube data requests (/youtubei/) came back HTTP 400 in Cobalt (att/get, guide) = the page never got data
+#    and stayed on its loading skeleton. Tested from the PC: the same JSON body without/with a wrong
+#    Content-Type gives 400. Fix: rebuild each /youtubei/ fetch as fetch(url-string, plain init) with method,
+#    headers and body copied out of a Request object, body as text, Content-Type application/json if missing.
+#    First 6 rebuilt requests are reported (yfix ...). Runs first in kPolyfills = closest to Cobalt's fetch.
+FETCH_FIX = (
+    "try{(function(){var nf=window.fetch;if(!nf)return;var cnt=0;"
+    "window.fetch=function(u,o){var isReq=!!(u&&typeof u==='object'&&u.url);var url=isReq?u.url:String(u);"
+    "if(url.indexOf('/youtubei/')<0)return nf.apply(this,arguments);"
+    "var init={},k;if(o)for(k in o)init[k]=o[k];var method=String(init.method||(isReq&&u.method)||'GET').toUpperCase();"
+    "var hdr={};var addH=function(h){if(!h)return;try{if(Array.isArray(h)){h.forEach(function(p){hdr[String(p[0]).toLowerCase()]=p[1];});}"
+    "else if(typeof h.forEach==='function'){h.forEach(function(v,n){hdr[String(n).toLowerCase()]=v;});}"
+    "else{for(var n in h)hdr[n.toLowerCase()]=h[n];}}catch(e){}};if(isReq)addH(u.headers);addH(init.headers);"
+    "var bp;if(init.body!==undefined&&init.body!==null)bp=Promise.resolve(init.body);"
+    "else if(isReq&&method!=='GET'&&method!=='HEAD'&&u.clone)bp=u.clone().text();else bp=Promise.resolve(undefined);"
+    "var self=this;return bp.then(function(b){if(b&&typeof b==='object'){"
+    "if(typeof b.text==='function')return b.text();"
+    "try{if(b instanceof ArrayBuffer)return new TextDecoder().decode(new Uint8Array(b));"
+    "if(ArrayBuffer.isView(b))return new TextDecoder().decode(b);}catch(e){}}return b;}).then(function(b){"
+    "if(typeof b==='string'&&!hdr['content-type']&&b.charAt(0)==='{')hdr['content-type']='application/json';"
+    "if(cnt++<6&&typeof gbr==='function')gbr('yfix '+method+' '+url.split('?')[0].slice(-30)+' req='+(isReq?1:0)"
+    "+' ct='+hdr['content-type']+' btype='+(typeof b)+' len='+(b&&b.length)+' head='+(typeof b==='string'?b.slice(0,60):''));"
+    "var ni={method:method,headers:hdr,credentials:init.credentials||(isReq&&u.credentials)||'same-origin'};"
+    "if(b!==undefined&&b!==null)ni.body=b;if(init.signal)ni.signal=init.signal;return nf.call(self,url,ni);});};"
+    "})();}catch(e){}"
+)
+
+# 7. Small polyfills for features Cobalt 25 lacks (probe 2 list); each only when missing.
+POLYFILLS = (
+    "try{(function(){var W=window,D=document,E=W.Element&&Element.prototype,H=W.HTMLElement&&HTMLElement.prototype;"
+    "if(!W.requestIdleCallback){W.requestIdleCallback=function(cb){var s=Date.now();return setTimeout(function(){"
+    "cb({didTimeout:false,timeRemaining:function(){return Math.max(0,50-(Date.now()-s));}});},1);};"
+    "W.cancelIdleCallback=function(i){clearTimeout(i);};}"
+    "if(!W.structuredClone)W.structuredClone=function(v){return v===undefined?v:JSON.parse(JSON.stringify(v));};"
+    "if(W.CSS&&!CSS.escape)CSS.escape=function(s){var B=String.fromCharCode(92);return String(s).replace(/[^a-zA-Z0-9_-]/g,"
+    "function(c){return B+c;});};"
+    "if(!W.URLSearchParams){var enc=function(x){return encodeURIComponent(x).split('%20').join('+');},"
+    "dec=function(x){try{return decodeURIComponent(String(x).split('+').join(' '));}catch(e){return String(x);}};"
+    "var U=function(init){this._l=[];var self=this;if(init==null)return;if(typeof init==='string'){"
+    "if(init.charAt(0)==='?')init=init.slice(1);init.split('&').forEach(function(p){if(!p)return;var i=p.indexOf('=');"
+    "self._l.push(i<0?[dec(p),'']:[dec(p.slice(0,i)),dec(p.slice(i+1))]);});}"
+    "else if(Array.isArray(init)){init.forEach(function(p){self._l.push([String(p[0]),String(p[1])]);});}"
+    "else if(init instanceof U){self._l=init._l.slice();}else{for(var k in init)self._l.push([k,String(init[k])]);}};"
+    "U.prototype.append=function(n,v){this._l.push([String(n),String(v)]);};"
+    "U.prototype.delete=function(n){this._l=this._l.filter(function(p){return p[0]!==String(n);});};"
+    "U.prototype.get=function(n){for(var i=0;i<this._l.length;i++)if(this._l[i][0]===String(n))return this._l[i][1];return null;};"
+    "U.prototype.getAll=function(n){return this._l.filter(function(p){return p[0]===String(n);}).map(function(p){return p[1];});};"
+    "U.prototype.has=function(n){return this.get(n)!==null;};"
+    "U.prototype.set=function(n,v){var f=false;n=String(n);this._l=this._l.filter(function(p){if(p[0]!==n)return true;"
+    "if(f)return false;f=true;p[1]=String(v);return true;});if(!f)this._l.push([n,String(v)]);};"
+    "U.prototype.forEach=function(cb,t){var s=this;this._l.slice().forEach(function(p){cb.call(t,p[1],p[0],s);});};"
+    "U.prototype.toString=function(){return this._l.map(function(p){return enc(p[0])+'='+enc(p[1]);}).join('&');};"
+    "U.prototype.entries=function(){return this._l.map(function(p){return [p[0],p[1]];})[Symbol.iterator]();};"
+    "U.prototype.keys=function(){return this._l.map(function(p){return p[0];})[Symbol.iterator]();};"
+    "U.prototype.values=function(){return this._l.map(function(p){return p[1];})[Symbol.iterator]();};"
+    "U.prototype[Symbol.iterator]=U.prototype.entries;W.URLSearchParams=U;}"
+    "if(H&&!('innerText' in H))Object.defineProperty(H,'innerText',{configurable:true,"
+    "get:function(){return this.textContent;},set:function(v){this.textContent=v;}});"
+    "if(E){var ins=function(el,pos,nodes){var p=el.parentNode;pos=String(pos).toLowerCase();"
+    "if(pos==='beforebegin'){nodes.forEach(function(n){p.insertBefore(n,el);});}"
+    "else if(pos==='afterbegin'){var f=el.firstChild;nodes.forEach(function(n){el.insertBefore(n,f);});}"
+    "else if(pos==='beforeend'){nodes.forEach(function(n){el.appendChild(n);});}"
+    "else if(pos==='afterend'){var s=el.nextSibling;nodes.forEach(function(n){p.insertBefore(n,s);});}};"
+    "if(!E.insertAdjacentHTML)E.insertAdjacentHTML=function(pos,html){var t=D.createElement('div');t.innerHTML=html;"
+    "var a=[];while(t.firstChild)a.push(t.removeChild(t.firstChild));ins(this,pos,a);};"
+    "if(!E.insertAdjacentElement)E.insertAdjacentElement=function(pos,n){ins(this,pos,[n]);return n;};"
+    "if(!E.getAttributeNames)E.getAttributeNames=function(){var r=[];for(var i=0;i<this.attributes.length;i++)"
+    "r.push(this.attributes[i].name);return r;};"
+    "var sx=function(el,a,b,add){var x,y;if(a&&typeof a==='object'){x=a.left;y=a.top;}else{x=a;y=b;}"
+    "if(x!=null&&!isNaN(x))el.scrollLeft=(add?el.scrollLeft:0)+Number(x);"
+    "if(y!=null&&!isNaN(y))el.scrollTop=(add?el.scrollTop:0)+Number(y);};"
+    "if(!E.scrollTo)E.scrollTo=function(a,b){sx(this,a,b,false);};if(!E.scroll)E.scroll=E.scrollTo;"
+    "if(!E.scrollBy)E.scrollBy=function(a,b){sx(this,a,b,true);};"
+    "if(!E.scrollIntoView)E.scrollIntoView=function(){};}"
+    "var se=function(){return D.scrollingElement||D.documentElement||D.body;};"
+    "if(!W.scrollTo)W.scrollTo=function(a,b){var el=se();if(el)sx(el,a,b,false);};if(!W.scroll)W.scroll=W.scrollTo;"
+    "if(!W.scrollBy)W.scrollBy=function(a,b){var el=se();if(el)sx(el,a,b,true);};"
+    "try{if(!('scrollY' in W))Object.defineProperty(W,'scrollY',{configurable:true,get:function(){var el=se();return el?el.scrollTop:0;}});"
+    "if(!('scrollX' in W))Object.defineProperty(W,'scrollX',{configurable:true,get:function(){var el=se();return el?el.scrollLeft:0;}});"
+    "if(!('pageYOffset' in W))Object.defineProperty(W,'pageYOffset',{configurable:true,get:function(){return W.scrollY;}});"
+    "if(!('pageXOffset' in W))Object.defineProperty(W,'pageXOffset',{configurable:true,get:function(){return W.scrollX;}});}catch(e){}"
+    "if(W.history&&!history.pushState){var hs=null;history.pushState=function(s){hs=s;};"
+    "history.replaceState=function(s){hs=s;};try{if(!('state' in history))Object.defineProperty(history,'state',"
+    "{configurable:true,get:function(){return hs;}});}catch(e){}}"
+    "if(W.Node&&!Node.prototype.getRootNode)Node.prototype.getRootNode=function(){var n=this;while(n.parentNode)n=n.parentNode;return n;};"
+    "if(W.Event&&!Event.prototype.composedPath)Event.prototype.composedPath=function(){var p=[],n=this.target;"
+    "while(n){p.push(n);n=n.parentNode;}if(p.length&&p[p.length-1]!==W)p.push(W);return p;};"
+    "if(!W.MessageChannel){W.MessageChannel=function(){var mk=function(){return {onmessage:null,"
+    "start:function(){},close:function(){},addEventListener:function(t,f){if(t==='message')this.onmessage=f;},"
+    "removeEventListener:function(){}};};var a=mk(),b=mk();a.postMessage=function(d){setTimeout(function(){"
+    "if(b.onmessage)b.onmessage({data:d});},0);};b.postMessage=function(d){setTimeout(function(){"
+    "if(a.onmessage)a.onmessage({data:d});},0);};this.port1=a;this.port2=b;};}"
+    "if(W.crypto&&crypto.getRandomValues&&!crypto.randomUUID)crypto.randomUUID=function(){var b=new Uint8Array(16);"
+    "crypto.getRandomValues(b);b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;var h=[];for(var i=0;i<16;i++){"
+    "h.push((b[i]+256).toString(16).slice(1));if(i===3||i===5||i===7||i===9)h.push('-');}return h.join('');};"
+    "})();}catch(e){}"
+)
+for _js in (FETCH_FIX, POLYFILLS):
+    assert '"' not in _js and '\\' not in _js
+# Inserted right after the CSS.supports shim (both at the start of kPolyfills).
+patch("cobalt/network/adguard_engine.cc",
+      "const char kPolyfills[] =" + NL,
+      "const char kPolyfills[] =" + NL + "    \"" + FETCH_FIX + "\\n\"" + NL + "    \"" + POLYFILLS + "\\n\"" + NL)
+
 # Cobalt builds with -Werror,-Wunreachable-code, so no early return: CreateUserAgentString now only
 # returns the phone string, and Cobalt's own builder is kept under another name (declared first, so
 # -Wmissing-prototypes stays quiet; external linkage, so no unused-function warning).
