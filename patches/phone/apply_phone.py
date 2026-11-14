@@ -70,6 +70,31 @@ patch("cobalt/network/adguard_engine.cc",
       "const char kPolyfills[] =" + NL,
       "const char kPolyfills[] =" + NL + "    \"" + CSS_SUPPORTS_SHIM + "\\n\"" + NL)
 
+# 4. Page probe (diagnosis, phone only): Cobalt gold has no dev tools, and m.youtube.com stayed black with no
+#    errors. At 6 s and 20 s report element count, html/body style + size, and the first 24 elements of the
+#    body tree (depth <= 5) with size and display/visibility/opacity/colours, through the debug channel.
+PAGE_PROBE = (
+    "function gbp(t){try{var d=document,b=d.body,h=d.documentElement,all=d.getElementsByTagName('*');"
+    "var cs=function(el){var s=getComputedStyle(el);return s.display+'/'+s.visibility+'/'+s.opacity+'/'"
+    "+s.backgroundColor+'/'+s.color;};"
+    "var r=function(el){var q=el.getBoundingClientRect();return Math.round(q.width)+'x'+Math.round(q.height)"
+    "+'@'+Math.round(q.left)+','+Math.round(q.top);};"
+    "gbr('probe '+t+'s n='+all.length+' title='+d.title+' html:'+cs(h)+' '+r(h)+' body:'+(b?cs(b)+' '+r(b)"
+    "+' kids='+b.children.length+' text='+String(b.textContent||'').length:'none')+' ce='+(typeof customElements)"
+    "+' shadow='+(typeof Element.prototype.attachShadow)+' win='+innerWidth+'x'+innerHeight);"
+    "var L=[],w=function(el,dp){if(L.length>=24||dp>5)return;"
+    "var c=el.className&&typeof el.className==='string'?'.'+el.className.split(' ').slice(0,2).join('.'):'';"
+    "L.push(dp+':'+el.tagName.toLowerCase()+(el.id?'#'+el.id:'')+c+' '+r(el)+' '+cs(el));"
+    "for(var i=0;i<el.children.length;i++)w(el.children[i],dp+1);};if(b)w(b,0);"
+    "for(var k=0;k<L.length;k+=8)gbr('tree '+t+'s '+k+': '+L.slice(k,k+8).join(' | '));"
+    "}catch(e){gbr('probe threw '+gbs(e));}}"
+    "setTimeout(function(){gbp(6);},6000);setTimeout(function(){gbp(20);},20000);"
+)
+assert '"' not in PAGE_PROBE and '\\' not in PAGE_PROBE
+patch("cobalt/network/adguard_engine.cc",
+      "gbr('no window.fetch');}}catch(e){}\\n\";",
+      "gbr('no window.fetch');}}catch(e){}\\n\" \"" + PAGE_PROBE + "\\n\";")
+
 # Cobalt builds with -Werror,-Wunreachable-code, so no early return: CreateUserAgentString now only
 # returns the phone string, and Cobalt's own builder is kept under another name (declared first, so
 # -Wmissing-prototypes stays quiet; external linkage, so no unused-function warning).
