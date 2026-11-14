@@ -45,6 +45,31 @@ patch("cobalt/network/adguard_filter.cc",
       "if (q.size() > 600) q.resize(600);",
       "if (q.size() > 1500) q.resize(1500);")
 
+# 3. CSS.supports with ONE argument ("selector(:has(*))", "(display: grid)") is newer than Cobalt, which only
+#    takes (property, value) and throws "Invalid number of arguments". YouTube's mobile base script calls it
+#    at startup (pqa), so the whole page stopped (black screen). Shim: one argument -> selector test or
+#    split into property/value; unknown -> false. Runs first in the page script's polyfills.
+#    (No double quotes or backslashes: this text goes inside a C string.)
+CSS_SUPPORTS_SHIM = (
+    "try{(function(){var C=window.CSS,S=C&&C.supports;if(!S)return;"
+    "var f=function(p,v){if(arguments.length>1)return S.call(C,p,v);var s=String(p).trim();"
+    "if(s.indexOf('selector(')===0&&s.charAt(s.length-1)===')'){"
+    "try{document.querySelector(s.slice(9,-1));return true;}catch(e){return false;}}"
+    "if(s.charAt(0)==='('&&s.charAt(s.length-1)===')')s=s.slice(1,-1);"
+    "var i=s.indexOf(':');if(i<1)return false;"
+    "try{return S.call(C,s.slice(0,i).trim(),s.slice(i+1).trim());}catch(e){return false;}};"
+    "try{C.supports=f;}catch(e){}"
+    "if(C.supports!==f){try{Object.defineProperty(C,'supports',{value:f,configurable:true,writable:true});}catch(e){}}"
+    "if(C.supports!==f&&typeof gbr==='function')gbr('css.supports shim not applied');"
+    "})();}catch(e){}"
+)
+assert '"' not in CSS_SUPPORTS_SHIM and '\\' not in CSS_SUPPORTS_SHIM
+with open(os.path.join(root, "cobalt/network/adguard_engine.cc"), encoding="utf-8", newline="") as _f:
+    NL = "\r\n" if "const char kPolyfills[] =\r\n" in _f.read() else "\n"   # the engine keeps CRLF
+patch("cobalt/network/adguard_engine.cc",
+      "const char kPolyfills[] =" + NL,
+      "const char kPolyfills[] =" + NL + "    \"" + CSS_SUPPORTS_SHIM + "\\n\"" + NL)
+
 # Cobalt builds with -Werror,-Wunreachable-code, so no early return: CreateUserAgentString now only
 # returns the phone string, and Cobalt's own builder is kept under another name (declared first, so
 # -Wmissing-prototypes stays quiet; external linkage, so no unused-function warning).
