@@ -52,9 +52,7 @@ cmd = sys.argv[1]
 if cmd == "run":
     ref = sys.argv[2] if len(sys.argv) > 2 else "25.lts.40"
     cfg = sys.argv[3] if len(sys.argv) > 3 else "gold"
-    plat = sys.argv[4] if len(sys.argv) > 4 else "arm"  # arm (TV, 32-bit) or arm64 (phones)
-    print(call("/actions/workflows/%s/dispatches" % WF,
-               {"ref": "main", "inputs": {"cobalt_ref": ref, "config": cfg, "platform": plat}}))
+    print(call("/actions/workflows/%s/dispatches" % WF, {"ref": "main", "inputs": {"cobalt_ref": ref, "config": cfg}}))
 elif cmd == "cancel":
     print(call("/actions/runs/%s/cancel" % sys.argv[2], {}))
 elif cmd == "status":
