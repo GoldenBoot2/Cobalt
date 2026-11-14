@@ -28,11 +28,21 @@ def patch(rel, old, new):
     print("phone patch:", rel)
 
 
+# Cobalt builds with -Werror,-Wunreachable-code, so no early return: CreateUserAgentString now only
+# returns the phone string, and Cobalt's own builder is kept under another name (declared first, so
+# -Wmissing-prototypes stays quiet; external linkage, so no unused-function warning).
 patch(
     "cobalt/browser/user_agent_string.cc",
     "std::string CreateUserAgentString(const UserAgentPlatformInfo& platform_info) {\n",
+    "std::string CobaltUserAgentString(const UserAgentPlatformInfo& platform_info);\n"
+    "\n"
+    "// GoldenBoot phone build: mobile Chrome User-Agent, so sites serve their\n"
+    "// phone pages (m.youtube.com) instead of TV/desktop ones.\n"
     "std::string CreateUserAgentString(const UserAgentPlatformInfo& platform_info) {\n"
-    "  // GoldenBoot phone build: mobile Chrome User-Agent, so sites serve their\n"
-    "  // phone pages (m.youtube.com) instead of TV/desktop ones.\n"
-    "  if (true) return \"" + UA + "\";\n",
+    "  (void)platform_info;\n"
+    "  return \"" + UA + "\";\n"
+    "}\n"
+    "\n"
+    "// Cobalt's original User-Agent builder (not used by the phone build).\n"
+    "std::string CobaltUserAgentString(const UserAgentPlatformInfo& platform_info) {\n",
 )
