@@ -65,10 +65,20 @@ jobs:
           git log -1 --format='%H %cd %s'
           du -sh . ; df -h /
 
+      # Same depot_tools commit as youtube/cobalt's own CI (.github/actions/depot_tools). With
+      # DEPOT_TOOLS_UPDATE=0 depot_tools never bootstraps its bundled python3, and the gn wrapper
+      # then fails ("python3_bin_reldir.txt not found"), so the bootstrap is run by hand.
       - name: Set up depot_tools
         run: |
-          git clone -q --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          mkdir depot_tools && cd depot_tools
+          git init -q
+          git remote add origin https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          git fetch -q --depth 1 origin 4a978d8f1f3567d5bd729aec018bfc345a14e1cd
+          git checkout -q FETCH_HEAD
+          source ./bootstrap_python3 && bootstrap_python3
+          ls python3_bin_reldir.txt
           echo "$GITHUB_WORKSPACE/depot_tools" >> "$GITHUB_PATH"
+          ./build_telemetry opt-out || true
 
       - name: gclient sync (Android deps)
         working-directory: cobalt
