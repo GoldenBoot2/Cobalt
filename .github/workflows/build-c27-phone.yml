@@ -121,7 +121,7 @@ jobs:
           sudo install "sccache-v$v-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
           sccache --version
 
-      # The compiler cache carries the work from run to run. Only caches of at least 500 MB are
+      # The compiler cache carries the work from run to run. Only caches of at least 100 MB are
       # saved (a cancelled or early-failed run must never become the newest cache).
       - name: Restore the compiler cache
         uses: actions/cache/restore@v6
@@ -148,11 +148,13 @@ jobs:
           left=$(ninja -C "$OUT" -n cobalt/android:cobalt_apk 2>/dev/null | grep -c '^\[' || true)
           echo "steps to do: $left"
           set +e
-          timeout --signal=INT "${{ inputs.build_minutes }}m" autoninja -C "$OUT" -j 6 cobalt/android:cobalt_apk
-          rc=$?
+          timeout --signal=INT "${{ inputs.build_minutes }}m" autoninja -C "$OUT" -j 6 cobalt/android:cobalt_apk 2>&1 | tee ninja.log
+          rc=${PIPESTATUS[0]}
           set -e
           echo "ninja exit code $rc"
-          left=$(ninja -C "$OUT" -n cobalt/android:cobalt_apk 2>/dev/null | grep -c '^\[' || true)
+          # steps left = total - done, from the last "[done/total]" line (ninja -n counted 0 in run 43684497626)
+          last=$(grep -oE '\[[0-9]+/[0-9]+\]' ninja.log | tail -1 | tr -d '[]')
+          if [ "$rc" = 0 ]; then left=0; elif [ -n "$last" ]; then left=$(( ${last#*/} - ${last%/*} )); else left=unknown; fi
           echo "steps still to do: $left"
           sccache --show-stats || true
           sccache --stop-server || true
@@ -170,7 +172,7 @@ jobs:
           du -sh sccache
 
       - name: Save the compiler cache
-        if: always() && steps.cache_size.outputs.mb >= 500
+        if: always() && steps.cache_size.outputs.mb >= 100
         uses: actions/cache/save@v6
         with:
           path: sccache
