@@ -82,6 +82,23 @@ jobs:
           f=cobalt/browser/cobalt_content_browser_client.cc
           sed -i 's|^  static const std::string user_agent_str = platform_info.ToString();$|  static const std::string user_agent_str = (static_cast<void>(platform_info), std::string("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36"));|' "$f"
           test "$(grep -c 'Chrome/138.0.0.0 Mobile Safari' "$f")" = 1
+          # Diagnostic log lines (YouTube Music playback: its player request never reaches the GPU media service)
+          python3 - <<'GBDIAG'
+          # Diagnostic log lines for YouTube Music playback (2026-11-15): every hop of a Starboard player request.
+          def patch(f, a, b):
+              t = open(f, encoding='utf-8').read()
+              assert t.count(a) == 1, (f, a)
+              open(f, 'w', encoding='utf-8').write(t.replace(a, b))
+          patch('media/mojo/clients/mojo_renderer_factory.cc', '  interface_factory_->CreateStarboardRenderer(',
+                '  LOG(ERROR) << "GBDIAG renderer-side CreateStarboardRenderer factory=" << interface_factory_;\n  interface_factory_->CreateStarboardRenderer(')
+          patch('content/browser/media/media_interface_proxy.cc', '    factory->CreateStarboardRenderer(',
+                '    LOG(ERROR) << "GBDIAG browser proxy " << this << " forwards CreateStarboardRenderer";\n    factory->CreateStarboardRenderer(')
+          patch('media/mojo/services/interface_factory_impl.cc', '  auto renderer = mojo_media_client_->CreateStarboardRenderer(',
+                '  LOG(ERROR) << "GBDIAG gpu InterfaceFactoryImpl " << this << " CreateStarboardRenderer";\n  auto renderer = mojo_media_client_->CreateStarboardRenderer(')
+          patch('media/mojo/services/interface_factory_impl.cc', '    DLOG(ERROR) << "StarboardRenderer creation failed.";',
+                '    LOG(ERROR) << "GBDIAG StarboardRenderer creation failed.";')
+          print('GBDIAG patches applied')
+          GBDIAG
 
       # Same depot_tools commit as youtube/cobalt's own CI (.github/actions/depot_tools). With
       # DEPOT_TOOLS_UPDATE=0 depot_tools never bootstraps its bundled python3, and the gn wrapper
