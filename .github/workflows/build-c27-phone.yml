@@ -75,6 +75,13 @@ jobs:
           f=cobalt/shell/android/content_view_render_view.cc
           sed -i 's|^    compositor_->SetBackgroundColor(SK_ColorTRANSPARENT);$|    compositor_->SetBackgroundColor(SkColorSetRGB(0x0F, 0x0F, 0x0F));|' "$f"
           test "$(grep -c 'SkColorSetRGB(0x0F, 0x0F, 0x0F)' "$f")" = 1
+          # Browser name on the network: Cobalt sends "Chrome/27.lts ... Starboard/18" (27 = Cobalt's version; the
+          # engine is Chromium 138), which sites read as a 2013 Chrome: YouTube Music answers "Your browser is
+          # deprecated". The phone app announces the real engine as mobile Chrome 138. (A plain early return would
+          # break the build: -Wunreachable-code.)
+          f=cobalt/browser/cobalt_content_browser_client.cc
+          sed -i 's|^  static const std::string user_agent_str = platform_info.ToString();$|  static const std::string user_agent_str = (static_cast<void>(platform_info), std::string("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36"));|' "$f"
+          test "$(grep -c 'Chrome/138.0.0.0 Mobile Safari' "$f")" = 1
 
       # Same depot_tools commit as youtube/cobalt's own CI (.github/actions/depot_tools). With
       # DEPOT_TOOLS_UPDATE=0 depot_tools never bootstraps its bundled python3, and the gn wrapper
