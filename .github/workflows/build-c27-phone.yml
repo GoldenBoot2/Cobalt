@@ -65,6 +65,17 @@ jobs:
           git log -1 --format='%H %cd %s'
           du -sh . ; df -h /
 
+      # Phone app: before a page has drawn, the compositor clears to YouTube's dark background instead of
+      # transparent. On Android 14+ Cobalt draws into the window's own opaque surface, where transparent shows
+      # as one black frame at the splash -> page switch. SetOverlayVideoMode() still sets it transparent when
+      # video overlays are on, so overlay video is not covered.
+      - name: Phone patches
+        working-directory: cobalt/src
+        run: |
+          f=cobalt/shell/android/content_view_render_view.cc
+          sed -i 's|^    compositor_->SetBackgroundColor(SK_ColorTRANSPARENT);$|    compositor_->SetBackgroundColor(SkColorSetRGB(0x0F, 0x0F, 0x0F));|' "$f"
+          test "$(grep -c 'SkColorSetRGB(0x0F, 0x0F, 0x0F)' "$f")" = 1
+
       # Same depot_tools commit as youtube/cobalt's own CI (.github/actions/depot_tools). With
       # DEPOT_TOOLS_UPDATE=0 depot_tools never bootstraps its bundled python3, and the gn wrapper
       # then fails ("python3_bin_reldir.txt not found"), so the bootstrap is run by hand.
