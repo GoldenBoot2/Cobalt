@@ -9,6 +9,7 @@ name: Build Cobalt 27 gold (Android phone, arm64)
 # A full Chromium build does not fit in one 6 h job on a free 4-CPU runner. The build stops
 # itself in time, saves its compiler cache (sccache) and is simply started again: each run
 # gets the already compiled files from the cache and goes further, until the APK is built.
+# (Until 2026-11-16 every save failed - sccache was still writing - so each run started from zero.)
 # Manual run only: Actions tab > this workflow > Run workflow.
 
 on:
@@ -31,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   DEPOT_TOOLS_UPDATE: 0
@@ -166,6 +168,9 @@ jobs:
         env:
           SCCACHE_DIR: ${{ github.workspace }}/sccache
           SCCACHE_CACHE_SIZE: 8G
+          # Direct mode: a file already in the cache is looked up from its sources and headers without running
+          # the preprocessor, so finished steps are skipped in milliseconds instead of being re-processed.
+          SCCACHE_DIRECT: "true"
         run: |
           mkdir -p "$SCCACHE_DIR"; du -sh "$SCCACHE_DIR"
           sccache --start-server || true
@@ -187,10 +192,19 @@ jobs:
           echo "left=$left" >> "$GITHUB_OUTPUT"
           echo "### Cobalt 27 ${{ inputs.config }}: ninja exit $rc, steps left $left" >> "$GITHUB_STEP_SUMMARY"
 
+      # An sccache server still writing to the cache made the save fail ("tar: sccache: file changed as we
+      # read it", run 43728294362) with only a warning, so every run started from an empty cache. The server is
+      # stopped and must be gone before the cache is measured and saved.
       - name: Measure the compiler cache
         id: cache_size
         if: always()
         run: |
+          sccache --stop-server >/dev/null 2>&1 || true
+          for i in $(seq 1 30); do pgrep -x sccache >/dev/null || break; sleep 1; done
+          sudo pkill -9 -x sccache || true
+          sleep 2
+          if pgrep -x sccache; then echo "sccache still running"; exit 1; fi
+          sync
           mkdir -p sccache
           echo "mb=$(du -sm sccache | cut -f1)" >> "$GITHUB_OUTPUT"
           du -sh sccache
@@ -201,6 +215,17 @@ jobs:
         with:
           path: sccache
           key: sccache-c27-android-arm64-${{ inputs.config }}-${{ github.run_id }}
+
+      # actions/cache/save only warns when saving fails: check that the cache really exists
+      - name: Check the cache was saved
+        if: always() && steps.cache_size.outputs.mb >= 100
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/${{ github.repository }}/actions/caches?key=sccache-c27-android-arm64-${{ inputs.config }}-${{ github.run_id }}" --jq '.total_count')
+          echo "caches saved with this run's key: $n"
+          echo "### compiler cache saved: $n (${{ steps.cache_size.outputs.mb }} MB)" >> "$GITHUB_STEP_SUMMARY"
+          test "$n" -ge 1
 
       - name: Collect the APK
         if: steps.build.outputs.rc == '0'
