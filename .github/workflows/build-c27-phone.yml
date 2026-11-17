@@ -159,6 +159,33 @@ jobs:
                 '    if (!frame_tree_node_->is_on_initial_empty_document()) {\n      LOG(ERROR) << "GBDIAG rfh " << this << " broker reset: renderer sent no new broker (bad message)";\n      broker_receiver_.reset();\n')
           print('GBDIAG patches applied')
           GBDIAG
+          # Black video after lock / unlock (user 2026-11-17/18, YT Music+): at screen off the app moves the running
+          # video decoder to a placeholder surface (GbVideo.java, MediaCodec.setOutputSurface) and at screen on back to
+          # the new surface. Cobalt's TV rule then released that decoder when the new surface arrived (any decoder still
+          # holding a surface counts as stale: OnSurfaceDestroyed -> TeardownCodec), and it is only rebuilt after a
+          # seek: measured "Calling MediaCodec.release()" right after onVideoSurfaceCreated, then "Trying to write input
+          # buffer when media_decoder_ is null" while the song played on. A NEW surface arriving while a decoder still
+          # holds one only happens in that app flow (Cobalt itself always reports the loss first, which releases it),
+          # so the decoder is kept and only the global surface is replaced. If the app could not move it, the app
+          # reports the loss first (GbVideo returns false) and the old release path runs as before.
+          python3 - <<'GBVIDEO'
+          f = 'starboard/android/shared/video_window.cc'
+          t = open(f, encoding='utf-8').read()
+          a = ('  if (g_video_surface_holder) {\n'
+               '    g_video_surface_holder->OnSurfaceDestroyed();\n'
+               '    g_video_surface_holder = NULL;\n'
+               '  }\n')
+          b = ('  if (g_video_surface_holder && surface) {\n'
+               '    // GoldenBoot phone: the app already moved this decoder to the new surface; keep it.\n'
+               '    SB_LOG(INFO) << "GB video decoder kept on the new surface";\n'
+               '  } else if (g_video_surface_holder) {\n'
+               '    g_video_surface_holder->OnSurfaceDestroyed();\n'
+               '    g_video_surface_holder = NULL;\n'
+               '  }\n')
+          assert t.count(a) == 1, 'video_window.cc holder block'
+          open(f, 'w', encoding='utf-8').write(t.replace(a, b))
+          print('GBVIDEO patch applied')
+          GBVIDEO
           # TEST builds (input devtools=true, 2026-11-17): gold leaves out the DevTools server (features.gni:
           # enable_devtools_backend is false for "Cobalt + release" -> a stub delegate; the browser client also returns
           # no DevTools manager in release). Keeping it lets the page be inspected over adb like the old devel build
