@@ -99,6 +99,33 @@ jobs:
                 '  LOG(ERROR) << "GBDIAG gpu InterfaceFactoryImpl " << this << " CreateStarboardRenderer";\n  auto renderer = mojo_media_client_->CreateStarboardRenderer(')
           patch('media/mojo/services/interface_factory_impl.cc', '    DLOG(ERROR) << "StarboardRenderer creation failed.";',
                 '    LOG(ERROR) << "GBDIAG StarboardRenderer creation failed.";')
+          # Round 2 (2026-11-17): Music's request reaches the renderer factory but never the browser proxy.
+          # Renderer-side MediaInterfaceFactory: which instance, thread hop, pipe binding, pipe loss, destruction.
+          r = 'content/renderer/media/media_interface_factory.cc'
+          patch(r, '  task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();\n  weak_this_ = weak_factory_.GetWeakPtr();\n}',
+                '  task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();\n  weak_this_ = weak_factory_.GetWeakPtr();\n  LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " created (frame broker)";\n}')
+          patch(r, '  // have `media_interface_factory_`.\n  weak_this_ = weak_factory_.GetWeakPtr();\n}',
+                '  // have `media_interface_factory_`.\n  weak_this_ = weak_factory_.GetWeakPtr();\n  LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " created (given remote)";\n}')
+          patch(r, 'MediaInterfaceFactory::~MediaInterfaceFactory() {\n',
+                'MediaInterfaceFactory::~MediaInterfaceFactory() {\n  LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " destroyed";\n')
+          patch(r, '          client_extension_remote) {\n  if (!task_runner_->BelongsToCurrentThread()) {',
+                '          client_extension_remote) {\n  LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " CreateStarboardRenderer on_own_thread=" << task_runner_->BelongsToCurrentThread();\n  if (!task_runner_->BelongsToCurrentThread()) {')
+          patch(r, '  GetMediaInterfaceFactory()->CreateStarboardRenderer(',
+                '  LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " sends to browser, bound=" << media_interface_factory_.is_bound() << " connected=" << (media_interface_factory_.is_bound() && media_interface_factory_.is_connected());\n  GetMediaInterfaceFactory()->CreateStarboardRenderer(')
+          patch(r, '  if (!media_interface_factory_) {\n',
+                '  if (!media_interface_factory_) {\n    LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " binds a new InterfaceFactory pipe, has_broker=" << (interface_broker_ != nullptr);\n')
+          patch(r, '  media_interface_factory_.reset();\n',
+                '  LOG(ERROR) << "GBDIAG renderer MediaInterfaceFactory " << this << " pipe DISCONNECTED";\n  media_interface_factory_.reset();\n')
+          # Browser side: each InterfaceFactory binding (with the frame's URL) and every CreateStarboardRenderer call.
+          b = 'content/browser/media/media_interface_proxy.cc'
+          patch(b, '  receivers_.Add(this, std::move(receiver));',
+                '  LOG(ERROR) << "GBDIAG browser proxy " << this << " Bind for " << render_frame_host().GetLastCommittedURL().spec();\n  receivers_.Add(this, std::move(receiver));')
+          patch(b, '  if (factory) {\n    LOG(ERROR) << "GBDIAG browser proxy "',
+                '  LOG(ERROR) << "GBDIAG browser proxy " << this << " got CreateStarboardRenderer, factory=" << factory;\n  if (factory) {\n    LOG(ERROR) << "GBDIAG browser proxy "')
+          # Which navigation Cobalt's release-build CSP check cancels (seen on Music right before its player requests).
+          patch('cobalt/browser/cobalt_secure_navigation_throttle.cc',
+                '  LOG(WARNING) << "Navigation throttle canceling navigation due to "\n                  "missing CSP headers";',
+                '  LOG(ERROR) << "GBDIAG CSP throttle cancels " << navigation_handle()->GetURL().spec() << " main_frame=" << navigation_handle()->IsInMainFrame();')
           print('GBDIAG patches applied')
           GBDIAG
 
