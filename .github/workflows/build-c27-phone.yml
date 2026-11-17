@@ -29,6 +29,12 @@ on:
         description: "Minutes of compiling in this run (the rest of the 6 h is for setup and saving the cache)"
         required: true
         default: "250"
+      devtools:
+        description: "TEST builds only: keep the DevTools server in gold (adb forward localabstract:content_shell_devtools_remote)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 permissions:
   contents: read
@@ -153,6 +159,25 @@ jobs:
                 '    if (!frame_tree_node_->is_on_initial_empty_document()) {\n      LOG(ERROR) << "GBDIAG rfh " << this << " broker reset: renderer sent no new broker (bad message)";\n      broker_receiver_.reset();\n')
           print('GBDIAG patches applied')
           GBDIAG
+          # TEST builds (input devtools=true, 2026-11-17): gold leaves out the DevTools server (features.gni:
+          # enable_devtools_backend is false for "Cobalt + release" -> a stub delegate; the browser client also returns
+          # no DevTools manager in release). Keeping it lets the page be inspected over adb like the old devel build
+          # (socket content_shell_devtools_remote; Android lets only adb/shell or the app itself connect).
+          if [ "${{ inputs.devtools }}" = "true" ]; then
+          python3 - <<'GBDEVTOOLS'
+          def patch(f, a, b):
+              t = open(f, encoding='utf-8').read()
+              assert t.count(a) == 1, (f, a)
+              open(f, 'w', encoding='utf-8').write(t.replace(a, b))
+          patch('content/browser/devtools/features.gni',
+                'enable_devtools_backend =\n    enable_devtools_frontend || !(is_cobalt && cobalt_is_release_build)',
+                'enable_devtools_backend = true  # GoldenBoot phone TEST build')
+          patch('cobalt/browser/cobalt_content_browser_client.cc',
+                '#if BUILDFLAG(COBALT_IS_RELEASE_BUILD)\n  return nullptr;\n#else\n  return content::ShellContentBrowserClient::CreateDevToolsManagerDelegate();\n#endif',
+                '  return content::ShellContentBrowserClient::CreateDevToolsManagerDelegate();  // GoldenBoot TEST build')
+          print('DevTools kept (TEST build)')
+          GBDEVTOOLS
+          fi
 
       # Same depot_tools commit as youtube/cobalt's own CI (.github/actions/depot_tools). With
       # DEPOT_TOOLS_UPDATE=0 depot_tools never bootstraps its bundled python3, and the gn wrapper

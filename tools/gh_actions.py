@@ -2,7 +2,8 @@
 Usage:
   python -I gh_actions.py run [ref] [config]     start the TV build (build-android-arm.yml)
   python -I gh_actions.py run-phone [ref] [config]  start the separate PHONE build (build-android-phone.yml)
-  python -I gh_actions.py run-c27 [ref] [config]    start the Cobalt 27 gold PHONE build (build-c27-phone.yml; run again until done)
+  python -I gh_actions.py run-c27 [ref] [config] [devtools]   start the Cobalt 27 gold PHONE build (build-c27-phone.yml;
+                                                    run again until done; "devtools" = TEST build keeping the DevTools server)
   python -I gh_actions.py cancel <run_id>        cancel a run
   python -I gh_actions.py status                 latest runs + job steps
   python -I gh_actions.py log <job_id> [lines]   tail of a job log
@@ -62,7 +63,10 @@ cmd = sys.argv[1]
 if cmd == "run":
     ref = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_REF
     cfg = sys.argv[3] if len(sys.argv) > 3 else "gold"
-    print(call("/actions/workflows/%s/dispatches" % WF, {"ref": "main", "inputs": {"cobalt_ref": ref, "config": cfg}}))
+    inputs = {"cobalt_ref": ref, "config": cfg}
+    if WF == "build-c27-phone.yml" and "devtools" in sys.argv[4:]:   # TEST build that keeps the DevTools server
+        inputs["devtools"] = "true"
+    print(call("/actions/workflows/%s/dispatches" % WF, {"ref": "main", "inputs": inputs}))
 elif cmd == "cancel":
     print(call("/actions/runs/%s/cancel" % sys.argv[2], {}))
 elif cmd == "status":
