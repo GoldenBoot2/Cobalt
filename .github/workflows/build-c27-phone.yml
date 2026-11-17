@@ -140,6 +140,13 @@ jobs:
                 '  LOG(ERROR) << "GBDIAG rfh " << this << " broker bound, url=" << GetLastCommittedURL().spec() << " prerendering=" << frame_tree()->is_prerendering() << " preview=" << (mojo_binder_policy_applier_ != nullptr);\n  broker_receiver_.Bind(std::move(receiver));\n  broker_receiver_.SetFilter(')
           patch(f, 'void RenderFrameHostImpl::ReportNoBinderForInterface(const std::string& error) {\n',
                 'void RenderFrameHostImpl::ReportNoBinderForInterface(const std::string& error) {\n  LOG(ERROR) << "GBDIAG rfh " << this << " NO BINDER: " << error << " url=" << GetLastCommittedURL().spec();\n')
+          # FIX (round-3 result, 2026-11-17): YouTube Music asks for payments.mojom.DigitalGoodsFactory (Play
+          # billing), which Cobalt does not provide. Chromium then calls ReportBadMessage on the frame's interface
+          # broker, which CLOSES the page's whole BrowserInterfaceBroker pipe: every later interface request of
+          # that page (media.mojom.InterfaceFactory = the video player) is dropped and Music never plays. Only log
+          # it and keep the broker open; the asked-for interface pipe alone is dropped, as for any missing binder.
+          patch(f, '  broker_receiver_.ReportBadMessage(error + " for the frame/document scope");\n',
+                '  // GoldenBoot phone: keep the broker open (YouTube Music asks for DigitalGoodsFactory).\n')
           patch(f, '    if (broker_receiver_.is_bound()) {\n      broker_receiver_.reset();\n    }\n',
                 '    if (broker_receiver_.is_bound()) {\n      LOG(ERROR) << "GBDIAG rfh " << this << " broker reset for a new document";\n      broker_receiver_.reset();\n    }\n')
           patch(f, '    if (!frame_tree_node_->is_on_initial_empty_document()) {\n      broker_receiver_.reset();\n',
