@@ -186,6 +186,87 @@ jobs:
           open(f, 'w', encoding='utf-8').write(t.replace(a, b))
           print('GBVIDEO patch applied')
           GBVIDEO
+          # Sound on videos opened from links or fresh loads, and Shorts with their overlay (user 2026-11-18, ported
+          # from the WebView test app where it was verified): YouTube's player config enableMutedAutoplay is turned off
+          # (feed previews keep it) and a cued Short opened directly is started like a tap. It must run before
+          # YouTube's first inline scripts, so it is added to the scripts Cobalt itself injects at document start
+          # (cobalt/shell/embedded_resources/cobalt_java_script_polyfill, embedded by embed_polyfilled_javascript).
+          # Measured on Cobalt 2.0.142 before: a watch link and a Short link both started MUTED, the Short without overlay.
+          cat > cobalt/shell/embedded_resources/cobalt_java_script_polyfill/gb_host.js <<'GBHOST'
+          /* GoldenBoot phone (copy of the WebView test app's gb_host.js): runs at document start through Cobalt's own
+             polyfill injection (Shell::RegisterInjectedJavaScript, every origin), so only on YouTube hosts. */
+          if (/^(m|music|www)\.youtube\.com$/.test(location.hostname)) {
+          /* The player config tells YouTube's player whether the host needs muted autoplay (enableMutedAutoplay). m.youtube.com
+             turns it on because mobile browsers block sound until a tap; this app allows sound (mediaPlaybackRequiresUserGesture
+             false), so a video the user opens (watch page, Shorts, links from other apps) starts with sound.
+             Feed previews (INLINE_PREVIEW) keep YouTube's muted preview with its mute / captions buttons, like the official app
+             (user 2026-11-18: "while a preview is playing, the webviews controls are missing").
+             The configs arrive through ytcfg.set (a plain property assignment), caught here with a setter on the key, then stored
+             as a normal property. */
+          (function () {
+            var KEY = 'WEB_PLAYER_CONTEXT_CONFIGS';
+            function fix(v) {
+              try {
+                for (var k in v) {
+                  if (!v[k] || typeof v[k] !== 'object' || /INLINE_PREVIEW/.test(k)) continue;
+                  v[k].enableMutedAutoplay = false;
+                }
+              } catch (e) {}
+              return v;
+            }
+            Object.defineProperty(Object.prototype, KEY, {
+              configurable: true,
+              set: function (v) { Object.defineProperty(this, KEY, { value: fix(v), writable: true, enumerable: true, configurable: true }); }
+            });
+          })();
+
+          /* WORKAROUND (user approved 2026-11-18: "Workaround: auto-unmute ... and it should display the controls too").
+             A Short opened directly (link, fresh load) on YouTube's mobile site starts only through muted autoplay, and in that
+             mode YouTube shows a stripped view without the Shorts overlay (same in phone Chrome; measured). With muted autoplay
+             off (above) the Short waits, cued, WITH the full overlay. Here the app starts that waiting Short the way the user's
+             tap would (YouTube's own player.playVideo()): sound and overlay at once. Only on a fresh page before any tap in it,
+             only while the Short is cued (state 5); Shorts swiped to later and a Short the user paused are left alone. */
+          (function () {
+            if (!/^\/shorts\//.test(location.pathname)) return;
+            var t0 = Date.now();
+            // a tap on THIS page stops it. Not navigator.userActivation: Chromium carries the activation of the tap that opened
+            // the page (same site) into it, so a Short opened from our History looked "already tapped" and stayed cued
+            // (measured 2026-11-18).
+            var tapped = false;
+            ['pointerdown', 'keydown'].forEach(function (n) { addEventListener(n, function () { tapped = true; }, true); });
+            var timer = setInterval(function () {
+              try {
+                if (Date.now() - t0 > 15000 || tapped) { clearInterval(timer); return; }
+                var p = document.querySelector('#shorts-player') || document.getElementById('movie_player');
+                if (!p || typeof p.getPlayerState !== 'function' || !/^\/shorts\//.test(location.pathname)) return;
+                // start only once YouTube has built the overlay: starting earlier (cold start, measured 2026-11-18) makes the page
+                // skip the overlay, the same as an autoplaying Short
+                if (p.getPlayerState() === 5 && document.querySelector('ytm-reel-player-overlay-renderer reel-action-bar-view-model')) {
+                  p.playVideo(); clearInterval(timer);
+                }
+              } catch (e) {}
+            }, 300);
+          })();
+          }
+
+          GBHOST
+          test -s cobalt/shell/embedded_resources/cobalt_java_script_polyfill/gb_host.js
+          # No 30 s page-load timeout (TV behaviour): CobaltWebContentsObserver raised the TV "Can't connect" error while
+          # a page was still loading on a slow network (kNavigationTimeoutSeconds = 30). Phone browsers keep loading and
+          # rely on the network stack's own timeouts; real load failures still raise the error (shown by the app as its
+          # phone screen, dl/GbOffline.java).
+          python3 - <<'GBNOTIMEOUT'
+          f = 'cobalt/browser/cobalt_web_contents_observer.cc'
+          t = open(f, encoding='utf-8').read()
+          a = ('  base::UmaHistogramBoolean("Cobalt.Network.NavigationTimeout", true);\n'
+               '  RaisePlatformError(navigation_id, url);\n')
+          b = ('  base::UmaHistogramBoolean("Cobalt.Network.NavigationTimeout", true);\n'
+               '  // GoldenBoot phone: a slow load keeps loading (no TV connection dialog after 30 s).\n'
+               '  LOG(INFO) << "GB navigation still loading after 30 s: " << navigation_id << " " << url;\n')
+          assert t.count(a) == 1, 'OnNavigationTimeout body'
+          open(f, 'w', encoding='utf-8').write(t.replace(a, b))
+          print('GBNOTIMEOUT patch applied')
+          GBNOTIMEOUT
           # TEST builds (input devtools=true, 2026-11-17): gold leaves out the DevTools server (features.gni:
           # enable_devtools_backend is false for "Cobalt + release" -> a stub delegate; the browser client also returns
           # no DevTools manager in release). Keeping it lets the page be inspected over adb like the old devel build
