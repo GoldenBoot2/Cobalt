@@ -126,6 +126,24 @@ jobs:
           patch('cobalt/browser/cobalt_secure_navigation_throttle.cc',
                 '  LOG(WARNING) << "Navigation throttle canceling navigation due to "\n                  "missing CSP headers";',
                 '  LOG(ERROR) << "GBDIAG CSP throttle cancels " << navigation_handle()->GetURL().spec() << " main_frame=" << navigation_handle()->IsInMainFrame();')
+          # Round 3 (2026-11-17, 2.0.86 result): on Music the renderer binds a new InterfaceFactory pipe through
+          # the frame's BrowserInterfaceBroker, the browser never logs Bind, and the pipe drops 2-17 ms later.
+          # Log the broker's dispatch, prerender/preview policy, binder lookup, and broker (re)binding/resets.
+          h = 'content/browser/browser_interface_broker_impl.h'
+          patch(h, '#include "base/memory/raw_ptr.h"\n', '#include "base/logging.h"\n#include "base/memory/raw_ptr.h"\n')
+          patch(h, '    DCHECK(receiver.interface_name().has_value());\n    if (!policy_applier_) {',
+                '    DCHECK(receiver.interface_name().has_value());\n    if (receiver.interface_name()->find("media.mojom.InterfaceFactory") != std::string::npos)\n      LOG(ERROR) << "GBDIAG broker " << this << " GetInterface " << *receiver.interface_name() << " policy_applier=" << (policy_applier_ != nullptr);\n    if (!policy_applier_) {')
+          patch(h, '  void BindInterface(mojo::GenericPendingReceiver receiver) {\n',
+                '  void BindInterface(mojo::GenericPendingReceiver receiver) {\n    if (receiver.interface_name() && receiver.interface_name()->find("media.mojom.InterfaceFactory") != std::string::npos)\n      LOG(ERROR) << "GBDIAG broker " << this << " BindInterface (policy passed) " << *receiver.interface_name();\n')
+          f = 'content/browser/renderer_host/render_frame_host_impl.cc'
+          patch(f, '  broker_receiver_.Bind(std::move(receiver));\n  broker_receiver_.SetFilter(',
+                '  LOG(ERROR) << "GBDIAG rfh " << this << " broker bound, url=" << GetLastCommittedURL().spec() << " prerendering=" << frame_tree()->is_prerendering() << " preview=" << (mojo_binder_policy_applier_ != nullptr);\n  broker_receiver_.Bind(std::move(receiver));\n  broker_receiver_.SetFilter(')
+          patch(f, 'void RenderFrameHostImpl::ReportNoBinderForInterface(const std::string& error) {\n',
+                'void RenderFrameHostImpl::ReportNoBinderForInterface(const std::string& error) {\n  LOG(ERROR) << "GBDIAG rfh " << this << " NO BINDER: " << error << " url=" << GetLastCommittedURL().spec();\n')
+          patch(f, '    if (broker_receiver_.is_bound()) {\n      broker_receiver_.reset();\n    }\n',
+                '    if (broker_receiver_.is_bound()) {\n      LOG(ERROR) << "GBDIAG rfh " << this << " broker reset for a new document";\n      broker_receiver_.reset();\n    }\n')
+          patch(f, '    if (!frame_tree_node_->is_on_initial_empty_document()) {\n      broker_receiver_.reset();\n',
+                '    if (!frame_tree_node_->is_on_initial_empty_document()) {\n      LOG(ERROR) << "GBDIAG rfh " << this << " broker reset: renderer sent no new broker (bad message)";\n      broker_receiver_.reset();\n')
           print('GBDIAG patches applied')
           GBDIAG
 
