@@ -186,6 +186,32 @@ jobs:
           open(f, 'w', encoding='utf-8').write(t.replace(a, b))
           print('GBVIDEO patch applied')
           GBVIDEO
+          # Frozen video after the screen was off (measured 2026-11-18): Chromium's WebMediaPlayerImpl disables the video
+          # track of an audio+video playback 10 s after the page is hidden (DisableVideoTrackIfNeeded); the chunk demuxer
+          # then returns end of stream for video ("Video EOS enqueued" / "Video ended" in Starboard) and on page show
+          # EnableVideoTrackIfNeeded asks the renderer to switch it back on, but StarboardRenderer::OnTracksChanged is
+          # "not supported" (a no-op), so no video is read again: picture frozen, audio on. The renderer cannot do track
+          # changes, so the frame must say the optimization is unsupported (the option exists for such renderers).
+          python3 - <<'GBTRACKS'
+          f = 'cobalt/renderer/cobalt_content_renderer_client.cc'
+          t = open(f, encoding='utf-8').read()
+          a = '#include "content/public/renderer/render_frame.h"\n'
+          b = a + '#include "content/public/renderer/render_frame_media_playback_options.h"\n'
+          assert t.count(a) == 1, 'renderer client include'
+          t = t.replace(a, b)
+          a = '  new CobaltRenderFrameObserver(render_frame);\n'
+          b = (a + '  {\n'
+                   '    // GoldenBoot phone: StarboardRenderer cannot switch tracks back on (OnTracksChanged is a no-op),\n'
+                   '    // so a video track disabled while the page was hidden stayed off: frozen video after unlock.\n'
+                   '    content::RenderFrameMediaPlaybackOptions gb_options =\n'
+                   '        render_frame->GetRenderFrameMediaPlaybackOptions();\n'
+                   '    gb_options.is_background_video_track_optimization_supported = false;\n'
+                   '    render_frame->SetRenderFrameMediaPlaybackOptions(gb_options);\n'
+                   '  }\n')
+          assert t.count(a) == 1, 'RenderFrameCreated observer line'
+          open(f, 'w', encoding='utf-8').write(t.replace(a, b))
+          print('GBTRACKS patch applied')
+          GBTRACKS
           # App scripts at document start, loaded from the APK (user 2026-11-18: "without recompiling them again and
           # again ... a one lifetime patch and allow all the scripts"). Cobalt runs its own polyfills before any page
           # script (Shell::RegisterInjectedJavaScript -> js_injection AddDocumentStartJavaScript, every origin). Here it
